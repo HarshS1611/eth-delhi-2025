@@ -41,7 +41,7 @@ export function CTASection() {
                   </div>
                   <div className="flex items-center">
                     <div className="mr-2 h-2 w-2 rounded-full bg-blue-400" />
-                    LUSDC Payments
+                    LSDC Payments
                   </div>
                   <div className="flex items-center">
                     <div className="mr-2 h-2 w-2 rounded-full bg-purple-400" />

@@ -202,7 +202,7 @@ export default function MarketplacePage() {
           </h1>
           <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
             Discover and license high-quality datasets curated by our AI and verified by the community.
-            All payments are processed securely using LUSDC stablecoin.
+            All payments are processed securely using LSDC stablecoin.
           </p>
         </div>
 

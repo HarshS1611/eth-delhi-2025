@@ -38,7 +38,7 @@ export function HeroSection() {
 
           <p className="mx-auto mb-8 max-w-2xl text-lg text-muted-foreground text-pretty">
             D³ Data DAO is the first decentralized marketplace for high quality datasets. Upload, analyze, tokenize,
-            and monetize data with AI quality scoring, permanent IPFS storage, and LUSDC payments.
+            and monetize data with AI quality scoring, permanent IPFS storage, and LSDC payments.
           </p>
 
           <div className="flex flex-col gap-4 sm:flex-row sm:justify-center">
@@ -68,7 +68,7 @@ export function HeroSection() {
               </div>
               <h3 className="mb-2 font-semibold">Dual Token Economy</h3>
               <p className="text-sm text-muted-foreground text-center">
-                Earn D3 governance tokens and receive LUSDC payments
+                Earn D3 governance tokens and receive LSDC payments
               </p>
             </div>
 

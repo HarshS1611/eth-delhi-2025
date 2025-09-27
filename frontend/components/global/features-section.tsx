@@ -20,8 +20,8 @@ const features = [
   },
   {
     icon: Coins,
-    title: "LUSDC Payments",
-    description: "Stable, transparent payments using LUSDC stablecoin with automatic revenue distribution.",
+    title: "LSDC Payments",
+    description: "Stable, transparent payments using LSDC stablecoin with automatic revenue distribution.",
     badge: "Stable Payments",
     color: "text-chart-2",
   },

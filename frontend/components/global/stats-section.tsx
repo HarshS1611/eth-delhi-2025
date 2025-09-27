@@ -19,7 +19,7 @@ const stats = [
   {
     icon: DollarSign,
     value: "$89.2K",
-    label: "LUSDC Volume",
+    label: "LSDC Volume",
     change: "+24% this month",
     color: "text-chart-2",
   },

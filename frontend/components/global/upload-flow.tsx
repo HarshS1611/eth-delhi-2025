@@ -146,7 +146,7 @@ export function UploadFlow() {
       qualityScore: Math.floor(Math.random() * 30) + 70, // 70-100
       completeness: Math.floor(Math.random() * 20) + 80, // 80-100
       relevance: Math.floor(Math.random() * 25) + 75, // 75-100
-      suggestedPrice: Math.floor(Math.random() * 50) + 25, // 25-75 PYUSD
+      suggestedPrice: Math.floor(Math.random() * 50) + 25, // 25-75 LSDC
       insights: [
         "High data completeness with minimal missing values",
         "Strong correlation with parliamentary voting patterns",
@@ -386,7 +386,7 @@ export function UploadFlow() {
                         <p className="text-sm text-muted-foreground">Based on quality and market analysis</p>
                       </div>
                       <div className="text-right">
-                        <div className="text-2xl font-bold text-accent">{aiAnalysis.suggestedPrice} PYUSD</div>
+                        <div className="text-2xl font-bold text-accent">{aiAnalysis.suggestedPrice} LSDC</div>
                         <div className="text-sm text-muted-foreground">per license</div>
                       </div>
                     </div>

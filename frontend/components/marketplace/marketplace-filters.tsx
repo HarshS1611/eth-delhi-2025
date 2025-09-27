@@ -223,7 +223,7 @@ export function MarketplaceFilters({ filters, onFiltersChange, totalResults }: M
 
               {/* Price Range Filter */}
               <div className="space-y-2">
-                <Label className="text-sm font-medium">Price Range (LUSDC)</Label>
+                <Label className="text-sm font-medium">Price Range (LSDC)</Label>
                 <div className="flex items-center space-x-2">
                   <Input
                     type="number"

@@ -90,7 +90,7 @@ export function PaymentModal({ dataset, isOpen, onClose }: PaymentModalProps) {
             <span>License Dataset</span>
           </DialogTitle>
           <DialogDescription>
-            Purchase a license to access and download this dataset. Payment is processed using LUSDC stablecoin.
+            Purchase a license to access and download this dataset. Payment is processed using LSDC stablecoin.
           </DialogDescription>
         </DialogHeader>
 
@@ -125,16 +125,16 @@ export function PaymentModal({ dataset, isOpen, onClose }: PaymentModalProps) {
             <div className="space-y-2 text-sm">
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Dataset Price</span>
-                <span>{dataset.price.toFixed(2)} LUSDC</span>
+                <span>{dataset.price.toFixed(2)} LSDC</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Platform Fee (5%)</span>
-                <span>{platformFee.toFixed(2)} LUSDC</span>
+                <span>{platformFee.toFixed(2)} LSDC</span>
               </div>
               <Separator />
               <div className="flex justify-between font-medium">
                 <span>Total Amount</span>
-                <span>{totalAmount.toFixed(2)} LUSDC</span>
+                <span>{totalAmount.toFixed(2)} LSDC</span>
               </div>
             </div>
           </div>
@@ -145,15 +145,15 @@ export function PaymentModal({ dataset, isOpen, onClose }: PaymentModalProps) {
             <div className="space-y-1 text-xs text-muted-foreground">
               <div className="flex justify-between">
                 <span>To Contributor ({dataset.contributor.name})</span>
-                <span>{contributorShare.toFixed(2)} LUSDC (85%)</span>
+                <span>{contributorShare.toFixed(2)} LSDC (85%)</span>
               </div>
               <div className="flex justify-between">
                 <span>To DAO Treasury</span>
-                <span>{daoTreasury.toFixed(2)} LUSDC (10%)</span>
+                <span>{daoTreasury.toFixed(2)} LSDC (10%)</span>
               </div>
               <div className="flex justify-between">
                 <span>Platform Operations</span>
-                <span>{platformFee.toFixed(2)} LUSDC (5%)</span>
+                <span>{platformFee.toFixed(2)} LSDC (5%)</span>
               </div>
             </div>
           </div>
@@ -174,7 +174,7 @@ export function PaymentModal({ dataset, isOpen, onClose }: PaymentModalProps) {
               ) : (
                 <>
                   <Wallet className="mr-2 h-4 w-4" />
-                  Pay {totalAmount.toFixed(2)} LUSDC
+                  Pay {totalAmount.toFixed(2)} LSDC
                   <ArrowRight className="ml-2 h-4 w-4" />
                 </>
               )}
