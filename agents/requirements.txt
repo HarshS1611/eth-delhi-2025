@@ -17,9 +17,17 @@ pyarrow>=5.0.0   # For Parquet file support
 spacy>=3.4.0  # For Named Entity Recognition (NER) in PII scanning
 # Note: Also run: python -m spacy download en_core_web_sm
 
+# Web API framework and server
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+python-multipart>=0.0.6  # For file upload support
+
 # Development and testing
 pytest>=7.0.0
 pytest-asyncio>=0.20.0
+
+# HTTP client library
+requests>=2.25.0  # For API health checks and HTTP requests
 
 # Logging and utilities
 python-dotenv>=0.19.0  # For environment configuration
