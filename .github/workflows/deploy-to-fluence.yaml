@@ -1,0 +1,64 @@
+name: Deploy Agents to Server
+
+on:
+  push:
+    branches: [main, agents]
+    paths:
+      - "agents/**"
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/ethdelhisshkey
+          chmod 600 ~/.ssh/ethdelhisshkey
+          ssh-keyscan -H 81.15.150.171 >> ~/.ssh/known_hosts
+
+      - name: Deploy agents folder
+        run: |
+          # Create backup of current deployment
+          ssh -i ~/.ssh/ethdelhisshkey -o StrictHostKeyChecking=no ubuntu@81.15.150.171 "
+            if [ -d ~/agents ]; then
+              cp -r ~/agents ~/agents_backup_$(date +%Y%m%d_%H%M%S)
+            fi
+          "
+
+          # Copy agents folder to server
+          scp -i ~/.ssh/ethdelhisshkey -o StrictHostKeyChecking=no -r agents/ ubuntu@81.15.150.171:~/
+
+          # Set permissions and restart services if needed
+          ssh -i ~/.ssh/ethdelhisshkey -o StrictHostKeyChecking=no ubuntu@81.15.150.171 "
+            cd ~/agents
+            
+            # Install/update Python dependencies if requirements.txt exists
+            if [ -f requirements.txt ]; then
+              python3 -m pip install -r requirements.txt --user
+            fi
+            
+            # Make Python files executable
+            find . -name '*.py' -exec chmod +x {} \;
+            
+            # Kill any existing agent processes (optional - uncomment if needed)
+            # pkill -f 'python.*agent' || true
+            
+            # Start the system (uncomment and modify as needed)
+            # nohup python3 start_system.py > ~/agents.log 2>&1 &
+            
+            echo 'Deployment completed successfully'
+          "
+
+      - name: Verify deployment
+        run: |
+          ssh -i ~/.ssh/ethdelhisshkey -o StrictHostKeyChecking=no ubuntu@81.15.150.171 "
+            echo 'Checking deployed files:'
+            ls -la ~/agents/
+            echo 'Deployment verification completed'
+          "
