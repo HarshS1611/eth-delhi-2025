@@ -1,4 +1,4 @@
-name: Deploy Agents to Server
+name: Deploy Validation API to Fluence VM
 
 on:
   push:
@@ -20,45 +20,62 @@ jobs:
           mkdir -p ~/.ssh
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/ethdelhisshkey
           chmod 600 ~/.ssh/ethdelhisshkey
-          ssh-keyscan -H 81.15.150.171 >> ~/.ssh/known_hosts
+          ssh-keyscan -H 81.15.150.161 >> ~/.ssh/known_hosts
 
-      - name: Deploy agents folder
+      - name: Deploy Validation API to Fluence VM
         run: |
-          # Create backup of current deployment
-          ssh -i ~/.ssh/ethdelhisshkey -o StrictHostKeyChecking=no ubuntu@81.15.150.171 "
-            if [ -d ~/agents ]; then
-              cp -r ~/agents ~/agents_backup_$(date +%Y%m%d_%H%M%S)
-            fi
-          "
+          ssh -i ~/.ssh/ethdelhisshkey -o StrictHostKeyChecking=no ubuntu@81.15.150.161 << 'ENDSSH'
+          set -e
+          echo "Starting ETH Delhi Validation API deployment..."
 
-          # Copy agents folder to server
-          scp -i ~/.ssh/ethdelhisshkey -o StrictHostKeyChecking=no -r agents/ ubuntu@81.15.150.171:~/
+          # Step 1: System Setup
+          echo "Step 1: System Setup"
+          sudo apt-get update -y
+          sudo apt-get install -y python3 python3-pip python3-venv curl wget
 
-          # Set permissions and restart services if needed
-          ssh -i ~/.ssh/ethdelhisshkey -o StrictHostKeyChecking=no ubuntu@81.15.150.171 "
-            cd ~/agents
-            
-            # Install/update Python dependencies if requirements.txt exists
-            if [ -f requirements.txt ]; then
-              python3 -m pip install -r requirements.txt --user
-            fi
-            
-            # Make Python files executable
-            find . -name '*.py' -exec chmod +x {} \;
-            
-            # Kill any existing agent processes (optional - uncomment if needed)
-            # pkill -f 'python.*agent' || true
-            
-            # Start the system (uncomment and modify as needed)
-            # nohup python3 start_system.py > ~/agents.log 2>&1 &
-            
-            echo 'Deployment completed successfully'
-          "
+          # Create backup if exists
+          if [ -d ~/eth-delhi-api ]; then
+            cp -r ~/eth-delhi-api ~/eth-delhi-api-backup-$(date +%Y%m%d-%H%M%S)
+          fi
 
-      - name: Verify deployment
-        run: |
-          ssh -i ~/.ssh/ethdelhisshkey -o StrictHostKeyChecking=no ubuntu@81.15.150.171 "
-            echo 'Checking deployed files:'
-            ls -la ~/agents/
-            echo 'Deployment verification completed'
-          "
+          # Step 2: Setup Python Environment  
+          echo "Step 2: Setup Python Environment"
+          mkdir -p ~/eth-delhi-api
+          cd ~/eth-delhi-api
+
+          if [ ! -d "venv" ]; then
+            echo "Creating Python virtual environment..."
+            python3 -m venv venv
+            source venv/bin/activate
+            pip install --upgrade pip
+            pip install fastapi uvicorn python-multipart pandas numpy scikit-learn scipy openpyxl pyarrow python-dotenv pydantic requests spacy
+            python -m spacy download en_core_web_sm || echo "SpaCy model failed, continuing..."
+          else
+            echo "Using existing virtual environment..."
+            source venv/bin/activate
+          fi
+
+          # Step 3: Download Your Application Files
+          echo "Step 3: Download Your Application Files"
+          wget -O validation_api.py https://raw.githubusercontent.com/HarshS1611/eth-delhi-2025/agents/agents/validation_api.py
+          wget -O orchestrator_agent.py https://raw.githubusercontent.com/HarshS1611/eth-delhi-2025/agents/agents/orchestrator_agent.py
+          wget -O enhanced_validation_agent.py https://raw.githubusercontent.com/HarshS1611/eth-delhi-2025/agents/agents/enhanced_validation_agent.py
+          wget -O legal_compliance_agent.py https://raw.githubusercontent.com/HarshS1611/eth-delhi-2025/agents/agents/legal_compliance_agent.py
+          wget -O legal_tools.py https://raw.githubusercontent.com/HarshS1611/eth-delhi-2025/agents/agents/legal_tools.py
+          wget -O tools.py https://raw.githubusercontent.com/HarshS1611/eth-delhi-2025/agents/agents/tools.py
+          wget -O validation_dashboard.html https://raw.githubusercontent.com/HarshS1611/eth-delhi-2025/agents/agents/validation_dashboard.html
+
+          # Download demo datasets
+          wget -O comprehensive_healthcare_dataset.csv https://raw.githubusercontent.com/HarshS1611/eth-delhi-2025/agents/agents/comprehensive_healthcare_dataset.csv || echo "Healthcare dataset not found"
+          wget -O comprehensive_air_quality_dataset.csv https://raw.githubusercontent.com/HarshS1611/eth-delhi-2025/agents/agents/comprehensive_air_quality_dataset.csv || echo "Air quality dataset not found"
+
+          # Step 4: Test the API
+          echo "Step 4: Test the API"
+          python validation_api.py &
+          sleep 5
+          curl http://localhost:8080/health || echo "API test completed"
+          pkill -f validation_api.py
+
+          # Step 5: Setup Production Service
+          echo "Step 5: Setup Production Service"
+          sudo tee /etc/systemd/system/validation-api.service > /dev/null << 'SERVICEEOF'
