@@ -4,6 +4,14 @@ Dataset Validation API - ETH Delhi 2025
 Production-ready API endpoint for frontend integration
 """
 
+import sys
+import os
+from pathlib import Path
+
+# Add current directory to Python path for imports
+current_dir = Path(__file__).parent
+sys.path.insert(0, str(current_dir))
+
 from fastapi import FastAPI, HTTPException, BackgroundTasks, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -14,13 +22,33 @@ import asyncio
 import json
 import tempfile
 import shutil
-from pathlib import Path
 from datetime import datetime
 import uuid
 import logging
 
-# Import our orchestrator
-from orchestrator_agent import run_comprehensive_validation, ComprehensiveValidationResult
+# Try to import our orchestrator with fallback
+try:
+    from orchestrator_agent import run_comprehensive_validation, ComprehensiveValidationResult
+    ORCHESTRATOR_AVAILABLE = True
+except ImportError as e:
+    logging.warning(f"Orchestrator not available: {e}")
+    ORCHESTRATOR_AVAILABLE = False
+    
+    # Create fallback result class
+    class ComprehensiveValidationResult:
+        def __init__(self):
+            self.success = False
+            self.dataset_name = "Unknown"
+            self.timestamp = datetime.now().isoformat()
+            self.overall_correctness_score = 0.0
+            self.grade = "F"
+            self.data_quality_score = 0.0
+            self.legal_compliance_score = 0.0
+            self.executive_summary = "Orchestrator agent not available"
+            self.processing_time_seconds = 0.0
+            self.critical_issues = ["Agent dependencies not available"]
+            self.recommendations = ["Install required dependencies"]
+            self.errors = ["Orchestrator agent import failed"]
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -123,10 +151,19 @@ async def get_dashboard():
 async def health_check():
     """Health check endpoint"""
     
+    # Check if orchestrator is available
+    agents_status = []
+    if ORCHESTRATOR_AVAILABLE:
+        agents_status = ["validation_agent", "legal_compliance_agent", "orchestrator"]
+        status = "healthy"
+    else:
+        agents_status = ["api_only"]
+        status = "degraded"
+    
     return HealthResponse(
-        status="healthy",
+        status=status,
         version="1.0.0",
-        agents_available=["validation_agent", "legal_compliance_agent", "orchestrator"],
+        agents_available=agents_status,
         uptime_seconds=0.0  # Placeholder since we're using direct functions
     )
 
@@ -367,12 +404,21 @@ async def process_validation_task(
     try:
         logger.info(f"Processing validation for request {request_id}")
         
-        # Run comprehensive validation using our orchestrator function
-        result = await run_comprehensive_validation(
-            dataset_path=dataset_path,
-            dataset_name=dataset_name,
-            include_legal=include_legal_analysis
-        )
+        if ORCHESTRATOR_AVAILABLE:
+            # Run comprehensive validation using our orchestrator function
+            result = await run_comprehensive_validation(
+                dataset_path=dataset_path,
+                dataset_name=dataset_name,
+                include_legal=include_legal_analysis
+            )
+        else:
+            # Fallback when orchestrator is not available
+            result = ComprehensiveValidationResult()
+            result.success = False
+            result.dataset_name = dataset_name
+            result.errors = ["Validation agents not available - dependencies missing"]
+            result.critical_issues = ["Please ensure all agent dependencies are installed"]
+            result.recommendations = ["Run: pip install -r requirements.txt"]
         
         if result.success:
             # Convert to API format
@@ -396,7 +442,7 @@ async def process_validation_task(
                     "legal_compliance": result.legal_compliance_score,
                     "overall": result.overall_correctness_score
                 },
-                "agents_used": ["validation_agent", "legal_compliance_agent"],
+                "agents_used": ["validation_agent", "legal_compliance_agent"] if ORCHESTRATOR_AVAILABLE else [],
                 "errors": result.errors
             }
             

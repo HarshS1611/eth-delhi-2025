@@ -1,0 +1,117 @@
+name: Deploy Validation API to Fluence VM
+
+on:
+  push:
+    branches:
+      - main
+      - agents
+    paths:
+      - "agents/**"
+      - ".github/workflows/deploy-to-fluence.yaml"
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    name: Deploy API to Fluence VM
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/ethdelhisshkey
+          chmod 600 ~/.ssh/ethdelhisshkey
+          ssh-keyscan -H 81.15.150.171 >> ~/.ssh/known_hosts
+
+      - name: Deploy Validation API to Fluence VM
+        run: |
+          ssh -i ~/.ssh/ethdelhisshkey -o StrictHostKeyChecking=no ubuntu@81.15.150.171 << 'ENDSSH'
+          set -e
+          echo "Starting ETH Delhi Validation API deployment..."
+
+          # Step 1: System Setup
+          echo "Step 1: System Setup"
+          sudo apt-get update -y
+          sudo apt-get install -y python3 python3-pip python3-venv curl wget
+
+          # Create backup if exists
+          if [ -d ~/eth-delhi-api ]; then
+            cp -r ~/eth-delhi-api ~/eth-delhi-api-backup-$(date +%Y%m%d-%H%M%S)
+          fi
+
+          # Step 2: Setup Python Environment  
+          echo "Step 2: Setup Python Environment"
+          mkdir -p ~/eth-delhi-api
+          cd ~/eth-delhi-api
+
+          if [ ! -d "venv" ]; then
+            echo "Creating Python virtual environment..."
+            python3 -m venv venv
+            source venv/bin/activate
+            pip install --upgrade pip
+            pip install fastapi uvicorn python-multipart pandas numpy scikit-learn scipy openpyxl pyarrow python-dotenv pydantic requests spacy uagents
+            python -m spacy download en_core_web_sm || echo "SpaCy model failed, continuing..."
+          else
+            echo "Using existing virtual environment..."
+            source venv/bin/activate
+            pip install --upgrade fastapi uvicorn python-multipart pandas numpy scikit-learn scipy openpyxl pyarrow python-dotenv pydantic requests spacy uagents
+          fi
+
+          # Step 3: Download Your Application Files
+          echo "Step 3: Download Your Application Files"
+          wget -O validation_api.py https://raw.githubusercontent.com/HarshS1611/eth-delhi-2025/agents/agents/validation_api.py
+          wget -O orchestrator_agent.py https://raw.githubusercontent.com/HarshS1611/eth-delhi-2025/agents/agents/orchestrator_agent.py
+          wget -O enhanced_validation_agent.py https://raw.githubusercontent.com/HarshS1611/eth-delhi-2025/agents/agents/enhanced_validation_agent.py
+          wget -O legal_compliance_agent.py https://raw.githubusercontent.com/HarshS1611/eth-delhi-2025/agents/agents/legal_compliance_agent.py
+          wget -O legal_tools.py https://raw.githubusercontent.com/HarshS1611/eth-delhi-2025/agents/agents/legal_tools.py
+          wget -O tools.py https://raw.githubusercontent.com/HarshS1611/eth-delhi-2025/agents/agents/tools.py
+          wget -O message_models.py https://raw.githubusercontent.com/HarshS1611/eth-delhi-2025/agents/agents/message_models.py
+          wget -O validation_dashboard.html https://raw.githubusercontent.com/HarshS1611/eth-delhi-2025/agents/agents/validation_dashboard.html
+
+          # Download demo datasets
+          wget -O comprehensive_healthcare_dataset.csv https://raw.githubusercontent.com/HarshS1611/eth-delhi-2025/agents/agents/comprehensive_healthcare_dataset.csv || echo "Healthcare dataset not found"
+          wget -O comprehensive_air_quality_dataset.csv https://raw.githubusercontent.com/HarshS1611/eth-delhi-2025/agents/agents/comprehensive_air_quality_dataset.csv || echo "Air quality dataset not found"
+
+          # Step 4: Setup Production Service
+          echo "Step 4: Setup Production Service"
+          sudo rm -f /etc/systemd/system/validation-api.service
+          echo "[Unit]" | sudo tee /etc/systemd/system/validation-api.service
+          echo "Description=Dataset Validation API - ETH Delhi 2025" | sudo tee -a /etc/systemd/system/validation-api.service
+          echo "After=network.target" | sudo tee -a /etc/systemd/system/validation-api.service
+          echo "" | sudo tee -a /etc/systemd/system/validation-api.service
+          echo "[Service]" | sudo tee -a /etc/systemd/system/validation-api.service
+          echo "Type=exec" | sudo tee -a /etc/systemd/system/validation-api.service
+          echo "User=ubuntu" | sudo tee -a /etc/systemd/system/validation-api.service
+          echo "WorkingDirectory=/home/ubuntu/eth-delhi-api" | sudo tee -a /etc/systemd/system/validation-api.service
+          echo "Environment=PATH=/home/ubuntu/eth-delhi-api/venv/bin" | sudo tee -a /etc/systemd/system/validation-api.service
+          echo "Environment=PYTHONPATH=/home/ubuntu/eth-delhi-api" | sudo tee -a /etc/systemd/system/validation-api.service
+          echo "ExecStart=/home/ubuntu/eth-delhi-api/venv/bin/python validation_api.py" | sudo tee -a /etc/systemd/system/validation-api.service
+          echo "Restart=always" | sudo tee -a /etc/systemd/system/validation-api.service
+          echo "RestartSec=10" | sudo tee -a /etc/systemd/system/validation-api.service
+          echo "" | sudo tee -a /etc/systemd/system/validation-api.service
+          echo "[Install]" | sudo tee -a /etc/systemd/system/validation-api.service
+          echo "WantedBy=multi-user.target" | sudo tee -a /etc/systemd/system/validation-api.service
+
+          # Step 5: Start the service
+          echo "Step 5: Starting the service"
+          sudo systemctl daemon-reload
+          sudo systemctl stop validation-api || echo "Service not running"
+          sudo systemctl enable validation-api
+          sudo systemctl start validation-api
+
+          # Wait for service to start
+          sleep 10
+
+          # Step 6: Test the API
+          echo "Step 6: Testing the API"
+          curl http://localhost:8080/health || echo "API test completed"
+          sudo systemctl status validation-api
+
+          echo "Deployment completed! API should be available at http://81.15.150.171:8080"
+          ENDSSH
