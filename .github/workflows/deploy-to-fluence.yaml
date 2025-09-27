@@ -2,17 +2,24 @@ name: Deploy Validation API to Fluence VM
 
 on:
   push:
-    branches: [main, agents]
+    branches:
+      - main
+      - agents
     paths:
       - "agents/**"
+      - ".github/workflows/deploy-to-fluence.yaml"
   workflow_dispatch:
 
 jobs:
   deploy:
+    name: Deploy API to Fluence VM
     runs-on: ubuntu-latest
 
+    permissions:
+      contents: read
+
     steps:
-      - name: Checkout code
+      - name: Checkout Code
         uses: actions/checkout@v4
 
       - name: Setup SSH
