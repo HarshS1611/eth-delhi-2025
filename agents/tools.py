@@ -3831,11 +3831,11 @@ class UtilityScoreSynthesizerTool(BaseTool):
         }
     
     def _synthesize_overall_score(self, data_integrity_score: float, highest_contextual_score: float) -> float:
-        """Apply the core synthesis formula with balanced weighting"""
-        # Improved formula that doesn't penalize general-purpose datasets too harshly:
-        # Overall Score = 0.7 × Data Integrity Score + 0.3 × Highest Contextual Score
-        # This ensures data integrity has the primary weight, with context as a bonus
-        overall_score = (0.7 * data_integrity_score) + (0.3 * highest_contextual_score)
+        """Apply the original multiplicative synthesis formula"""
+        # Original formula: Overall Score = (Highest Contextual Score / 100) × Data Integrity Score
+        # This formula rewards datasets that excel in specific research contexts
+        # while penalizing those that don't fit any particular domain well
+        overall_score = (highest_contextual_score / 100.0) * data_integrity_score
         return max(0.0, min(100.0, overall_score))
     
     def _generate_executive_summary(self, overall_score: float, integrity_score: float, 
