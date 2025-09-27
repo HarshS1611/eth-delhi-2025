@@ -80,13 +80,20 @@ class ValidationStatusResponse(Model):
 class OrchestratorAgent:
     """Master orchestrator for comprehensive dataset validation"""
     
-    def __init__(self, name: str = "orchestrator", port: int = 8002):
-        self.agent = Agent(
-            name=name,
-            port=port,
-            seed="eth_delhi_2025_orchestrator_agent",
-            endpoint=[f"http://localhost:{port}/submit"],
-        )
+    def __init__(self, name: str = "orchestrator", port: int = 8002, mailbox: bool = False):
+        # Agent configuration with optional mailbox support
+        agent_config = {
+            "name": name,
+            "port": port,
+            "seed": "eth_delhi_2025_orchestrator_agent",
+            "endpoint": [f"http://localhost:{port}/submit"],
+        }
+        
+        # Add mailbox configuration if requested
+        if mailbox:
+            agent_config["mailbox"] = True
+            
+        self.agent = Agent(**agent_config)
         
         # Agent state
         self.active_requests: Dict[str, Dict] = {}
@@ -111,7 +118,7 @@ class OrchestratorAgent:
         @self.agent.on_event("startup")
         async def startup_handler(ctx: Context):
             ctx.logger.info("🚀 Orchestrator Agent started!")
-            ctx.logger.info(f"Orchestrator address: {ctx.address}")
+            ctx.logger.info(f"Orchestrator address: {self.agent.address}")
             ctx.logger.info("Ready to coordinate comprehensive dataset validation!")
             
             # Try to discover other agents
@@ -184,6 +191,9 @@ class OrchestratorAgent:
                 self.active_requests[msg.request_id]["validation_result"] = msg
                 self.active_requests[msg.request_id]["validation_status"] = "completed" if msg.success else "failed"
                 
+                # Smart legal analysis triggering based on validation scores
+                await self._conditionally_trigger_legal_analysis(ctx, msg.request_id, msg)
+                
                 # Check if we can combine results
                 await self._check_and_combine_results(ctx, msg.request_id)
         
@@ -200,14 +210,29 @@ class OrchestratorAgent:
                 await self._check_and_combine_results(ctx, msg.request_id)
     
     async def _discover_agents(self, ctx: Context):
-        """Discover other agents in the network"""
-        # In a real implementation, this would use agent discovery mechanisms
-        # For now, we'll use known addresses or ports
+        """Discover other agents in the network using Almanac contract registration"""
         ctx.logger.info("🔍 Discovering validation and legal agents...")
         
-        # These would be discovered dynamically in production
-        self.validation_agent_address = "agent1qfpqn9jhvp9nnqhrmntks7xw0swag4y4mv7z6zygud6s9hqngy5ms6dh7h7"  # Placeholder
-        self.legal_agent_address = "agent1qtl5j5v6p4k4xqmq8w5h6g5i4f3e7r8s4w0r7t2l9n1x5c8z4m6k3p2s1"  # Placeholder
+        try:
+            # Try to discover agents by their known seeds/names
+            from enhanced_validation_agent import DatasetValidationAgent
+            from legal_compliance_agent import LegalComplianceAgent
+            
+            # Create temporary agent instances to get their addresses
+            temp_validator = DatasetValidationAgent()
+            temp_legal = LegalComplianceAgent()
+            
+            self.validation_agent_address = temp_validator.agent.address
+            self.legal_agent_address = temp_legal.agent.address
+            
+            ctx.logger.info(f"� Found validation agent: {self.validation_agent_address}")
+            ctx.logger.info(f"📡 Found legal agent: {self.legal_agent_address}")
+            
+        except Exception as e:
+            ctx.logger.warning(f"⚠️ Agent discovery failed, using fallback addresses: {e}")
+            # Fallback to known addresses for development
+            self.validation_agent_address = "agent1qfpqn9jhvp9nnqhrmntks7xw0swag4y4mv7z6zygud6s9hqngy5ms6dh7h7"
+            self.legal_agent_address = "agent1qtl5j5v6p4k4xqmq8w5h6g5i4f3e7r8s4w0r7t2l9n1x5c8z4m6k3p2s1"
         
         ctx.logger.info("✅ Agent discovery completed")
     
@@ -241,22 +266,11 @@ class OrchestratorAgent:
         # Since we're running in the same process, directly call the validation agent
         await self._run_validation_analysis(ctx, validation_request)
         
-        # 2. Start legal compliance analysis (if requested)
-        if request.include_legal_analysis:
-            legal_request = LegalComplianceRequest(
-                request_id=request.request_id,
-                dataset_name=request.dataset_name,
-                dataset_path=dataset_path,
-                analysis_type="full",
-                include_ner=True,
-                requester_address=ctx.address
-            )
-            
-            await self._run_legal_analysis(ctx, legal_request)
-        else:
-            # Mark legal as completed with default scores
-            self.active_requests[request.request_id]["legal_status"] = "skipped"
-            self.active_requests[request.request_id]["legal_result"] = None
+        # 2. Legal compliance analysis will be conditionally triggered after validation
+        # Skip immediate legal analysis - we'll decide after validation results
+        self.active_requests[request.request_id]["legal_status"] = "pending_validation"
+        self.active_requests[request.request_id]["legal_result"] = None
+        self.active_requests[request.request_id]["original_legal_request"] = request.include_legal_analysis
     
     async def _run_validation_analysis(self, ctx: Context, request: DatasetAnalysisRequest):
         """Run validation analysis using the validation agent tools"""
@@ -343,6 +357,60 @@ class OrchestratorAgent:
             )
             await self.handle_legal_result(ctx, ctx.address, error_result)
     
+    async def _conditionally_trigger_legal_analysis(self, ctx: Context, request_id: str, validation_result: DatasetAnalysisResult):
+        """Conditionally trigger legal analysis based on validation scores"""
+        request_data = self.active_requests[request_id]
+        original_legal_requested = request_data.get("original_legal_request", False)
+        
+        # Decision logic for legal analysis
+        should_run_legal = False
+        reason = ""
+        
+        if not original_legal_requested:
+            # If user didn't request legal analysis, skip regardless of scores
+            should_run_legal = False
+            reason = "Legal analysis not requested by user"
+        elif not validation_result.success:
+            # If validation failed, skip legal analysis
+            should_run_legal = False
+            reason = "Validation failed - skipping legal analysis"
+        else:
+            # Smart decision based on validation scores
+            utility_score = validation_result.overall_utility_score
+            integrity_score = validation_result.data_integrity_score
+            
+            # Run legal analysis only if scores suggest dataset has potential value
+            min_threshold = 50.0  # Configurable threshold
+            
+            if utility_score >= min_threshold or integrity_score >= min_threshold:
+                should_run_legal = True
+                reason = f"High scores detected (utility: {utility_score:.1f}, integrity: {integrity_score:.1f}) - triggering legal analysis"
+            else:
+                should_run_legal = False
+                reason = f"Low scores (utility: {utility_score:.1f}, integrity: {integrity_score:.1f}) - skipping expensive legal analysis"
+        
+        ctx.logger.info(f"🎯 Legal analysis decision for {request_id}: {should_run_legal} - {reason}")
+        
+        if should_run_legal:
+            # Trigger legal analysis
+            original_request = request_data["request"]
+            legal_request = LegalComplianceRequest(
+                request_id=request_id,
+                dataset_name=original_request.dataset_name,
+                dataset_path=original_request.dataset_path,
+                analysis_type="full",
+                include_ner=True,
+                requester_address=ctx.address
+            )
+            
+            self.active_requests[request_id]["legal_status"] = "running"
+            await self._run_legal_analysis(ctx, legal_request)
+        else:
+            # Skip legal analysis
+            self.active_requests[request_id]["legal_status"] = "skipped"
+            self.active_requests[request_id]["legal_result"] = None
+            self.active_requests[request_id]["legal_skip_reason"] = reason
+
     async def _check_and_combine_results(self, ctx: Context, request_id: str):
         """Check if both analyses are complete and combine results"""
         if request_id not in self.active_requests:
@@ -383,10 +451,20 @@ class OrchestratorAgent:
         
         # Calculate overall scores
         data_quality_score = validation_result.overall_utility_score if validation_result and validation_result.success else 0.0
-        legal_compliance_score = legal_result.overall_compliance_score if legal_result and legal_result.success else 50.0
         
-        # Weighted combination (70% data quality, 30% legal compliance)
-        overall_score = (data_quality_score * 0.7) + (legal_compliance_score * 0.3)
+        # Handle conditional legal analysis
+        legal_status = request_data.get("legal_status", "unknown")
+        if legal_status == "skipped":
+            # If legal analysis was skipped, use data quality score as primary
+            legal_compliance_score = 50.0  # Neutral score for skipped legal analysis
+            overall_score = data_quality_score  # 100% data quality when legal is skipped
+            skip_reason = request_data.get("legal_skip_reason", "Legal analysis skipped")
+        else:
+            # Normal legal analysis completed
+            legal_compliance_score = legal_result.overall_compliance_score if legal_result and legal_result.success else 50.0
+            # Weighted combination (70% data quality, 30% legal compliance)
+            overall_score = (data_quality_score * 0.7) + (legal_compliance_score * 0.3)
+            skip_reason = None
         
         # Determine grade
         if overall_score >= 90:
@@ -416,7 +494,7 @@ class OrchestratorAgent:
         
         # Generate executive summary
         executive_summary = self._generate_executive_summary(
-            original_request.dataset_name, overall_score, grade, data_quality_score, legal_compliance_score
+            original_request.dataset_name, overall_score, grade, data_quality_score, legal_compliance_score, skip_reason
         )
         
         return ComprehensiveValidationResult(
@@ -440,7 +518,7 @@ class OrchestratorAgent:
         )
     
     def _generate_executive_summary(self, dataset_name: str, overall_score: float, grade: str, 
-                                  data_quality_score: float, legal_compliance_score: float) -> str:
+                                  data_quality_score: float, legal_compliance_score: float, skip_reason: str = None) -> str:
         """Generate an executive summary of the analysis"""
         if overall_score >= 85:
             quality_desc = "excellent"
@@ -451,9 +529,14 @@ class OrchestratorAgent:
         else:
             quality_desc = "poor"
         
+        legal_analysis_note = ""
+        if skip_reason:
+            legal_analysis_note = f" Legal analysis was intelligently skipped: {skip_reason}."
+        
         return (f"Dataset '{dataset_name}' achieved an overall correctness score of {overall_score:.1f}/100 "
                 f"(Grade {grade}), indicating {quality_desc} quality. "
                 f"Data quality scored {data_quality_score:.1f}/100 and legal compliance scored {legal_compliance_score:.1f}/100. "
+                f"{legal_analysis_note} "
                 f"{'Recommended for production use.' if overall_score >= 80 else 'Improvements needed before production use.'}")
     
     async def _send_error_result(self, ctx: Context, requester: str, request_id: str, error_message: str):
@@ -615,9 +698,19 @@ def create_comprehensive_bureau():
     
     return bureau
 
+# Following Innovation Labs documentation pattern - bureau.run() at module level
 if __name__ == "__main__":
-    # Run the orchestrator agent
-    agent = OrchestratorAgent()
-    print("🚀 Starting Orchestrator Agent...")
-    print(f"Agent address: {agent.agent.address}")
-    agent.run()
+    import sys
+    
+    if len(sys.argv) > 1 and sys.argv[1] == "single":
+        # Run single orchestrator agent (for development/testing)
+        agent = OrchestratorAgent()
+        print("🚀 Starting Single Orchestrator Agent...")
+        print(f"Agent address: {agent.agent.address}")
+        agent.run()
+    else:
+        # Run comprehensive bureau (recommended pattern)
+        print("🏢 Starting Comprehensive Validation Bureau...")
+        bureau = create_comprehensive_bureau()
+        print("📡 Bureau will coordinate all validation agents")
+        bureau.run()

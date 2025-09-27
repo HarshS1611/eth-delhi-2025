@@ -83,16 +83,23 @@ class ComplianceStatusUpdate(Model):
 class LegalComplianceAgent:
     """Autonomous legal compliance agent using Fetch.ai uAgents framework"""
     
-    def __init__(self, name: str = "legal_compliance_agent", port: int = 8001, seed: str = "legal_compliance_seed"):
+    def __init__(self, name: str = "legal_compliance_agent", port: int = 8001, seed: str = "legal_compliance_seed", mailbox: bool = False):
         """Initialize the legal compliance agent"""
         
+        # Agent configuration with optional mailbox support
+        agent_config = {
+            "name": name,
+            "port": port,
+            "seed": seed,
+            "endpoint": [f"http://localhost:{port}/submit"],
+        }
+        
+        # Add mailbox configuration if requested
+        if mailbox:
+            agent_config["mailbox"] = True
+            
         # Create the uAgent
-        self.agent = Agent(
-            name=name,
-            port=port,
-            seed=seed,
-            endpoint=[f"http://localhost:{port}/submit"],
-        )
+        self.agent = Agent(**agent_config)
         
         # Fund agent for testnet operations
         fund_agent_if_low(self.agent.wallet.address())

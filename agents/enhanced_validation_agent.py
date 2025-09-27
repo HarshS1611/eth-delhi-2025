@@ -80,13 +80,20 @@ class AgentStatusResponse(Model):
 class DatasetValidationAgent:
     """Enhanced Dataset Validation Agent with complete analysis pipeline"""
     
-    def __init__(self, name: str = "dataset_validator", port: int = 8000):
-        self.agent = Agent(
-            name=name,
-            port=port,
-            seed="eth_delhi_2025_dataset_validation_agent",
-            endpoint=[f"http://localhost:{port}/submit"],
-        )
+    def __init__(self, name: str = "dataset_validator", port: int = 8000, mailbox: bool = False):
+        # Agent configuration with optional mailbox support
+        agent_config = {
+            "name": name,
+            "port": port,
+            "seed": "eth_delhi_2025_dataset_validation_agent",
+            "endpoint": [f"http://localhost:{port}/submit"],
+        }
+        
+        # Add mailbox configuration if requested
+        if mailbox:
+            agent_config["mailbox"] = True
+            
+        self.agent = Agent(**agent_config)
         
         # Agent state
         self.processed_requests = 0
@@ -107,8 +114,8 @@ class DatasetValidationAgent:
         @self.agent.on_event("startup")
         async def startup_handler(ctx: Context):
             ctx.logger.info("🚀 Enhanced Dataset Validation Agent started!")
-            ctx.logger.info(f"Agent name: {ctx.name}")
-            ctx.logger.info(f"Agent address: {ctx.address}")
+            ctx.logger.info(f"Agent name: {self.agent.name}")
+            ctx.logger.info(f"Agent address: {self.agent.address}")
             ctx.logger.info(f"Wallet address: {self.agent.wallet.address()}")
             ctx.logger.info(f"Total analysis tools available: {len(tool_registry.tools)}")
             
@@ -285,45 +292,31 @@ class DatasetValidationAgent:
             return self._create_error_result(request, [str(e)], "Pipeline execution failed")
     
     async def _run_foundational_analysis(self, df: pd.DataFrame, ctx: Context) -> Dict[str, Any]:
-        """Run all foundational analysis tools"""
+        """Run optimized foundational analysis tools based on dataset characteristics"""
         analysis_results = {}
         
-        # Core analysis tools
-        tools_to_run = [
-            ("data_profiler", {"data": df}),
-            ("missing_value_analyzer", {"data": df}),
-            ("duplicate_record_detector", {"data": df}),
-            ("data_type_consistency_checker", {"data": df}),
-            ("outlier_detection_engine", {"data": df}),
-            ("feature_correlation_mapper", {"data": df}),
-        ]
+        # First, run data profiler to understand dataset characteristics
+        ctx.logger.info("🔍 Running data profiler for smart tool selection...")
+        profile_result = await tool_registry.execute_tool("data_profiler", data=df)
+        analysis_results["data_profiler"] = profile_result
         
-        # Add ML tools if target column can be inferred
+        if not profile_result.get("success", False):
+            ctx.logger.error("❌ Data profiler failed - using default tool set")
+            
+        # Extract dataset characteristics for smart tool selection
+        dataset_size = df.shape[0]
+        num_features = df.shape[1]
         numeric_cols = df.select_dtypes(include=[np.number]).columns
-        categorical_cols = df.select_dtypes(include=['object', 'category']).columns
+        categorical_cols = df.select_dtypes(include=['object']).columns
         
-        # Try to identify potential target column
-        target_column = None
-        potential_targets = ['target', 'label', 'class', 'y', 'outcome', 'result']
-        for col in df.columns:
-            if col.lower() in potential_targets:
-                target_column = col
-                break
+        ctx.logger.info(f"📊 Dataset characteristics: {dataset_size} rows, {num_features} features")
+        ctx.logger.info(f"   📈 Numeric columns: {len(numeric_cols)}")
+        ctx.logger.info(f"   📝 Categorical columns: {len(categorical_cols)}")
         
-        # If no obvious target, use last column if it looks like a target
-        if target_column is None and len(df.columns) > 1:
-            last_col = df.columns[-1]
-            if df[last_col].nunique() <= 20:  # Looks like a classification target
-                target_column = last_col
+        # Smart tool selection based on dataset characteristics
+        tools_to_run = self._select_optimal_tools(df, dataset_size, num_features, len(numeric_cols), len(categorical_cols))
         
-        if target_column is not None:
-            ctx.logger.info(f"Using '{target_column}' as target column for ML analysis")
-            tools_to_run.extend([
-                ("class_balance_assessor", {"data": df, "target_column": target_column}),
-                ("baseline_model_performance", {"data": df, "target_column": target_column}),
-                ("feature_importance_analyzer", {"data": df, "target_column": target_column}),
-                ("data_separability_scorer", {"data": df, "target_column": target_column}),
-            ])
+        ctx.logger.info(f"🎯 Selected {len(tools_to_run)} optimal tools for analysis")
         
         # Execute tools
         for tool_name, params in tools_to_run:
@@ -343,6 +336,82 @@ class DatasetValidationAgent:
         
         return analysis_results
     
+    def _select_optimal_tools(self, df: pd.DataFrame, dataset_size: int, num_features: int, 
+                            num_numeric: int, num_categorical: int) -> List[tuple]:
+        """Select optimal analysis tools based on dataset characteristics"""
+        tools_to_run = []
+        
+        # Core analysis tools (always run these - essential for any dataset)
+        core_tools = [
+            ("missing_value_analyzer", {"data": df}),
+            ("duplicate_record_detector", {"data": df}),
+            ("data_type_consistency_checker", {"data": df}),
+        ]
+        tools_to_run.extend(core_tools)
+        
+        # Conditional tools based on dataset characteristics
+        
+        # 1. Outlier detection - only if we have numeric columns
+        if num_numeric > 0:
+            tools_to_run.append(("outlier_detection_engine", {"data": df}))
+        
+        # 2. Correlation analysis - only if multiple numeric columns
+        if num_numeric >= 2:
+            tools_to_run.append(("feature_correlation_mapper", {"data": df}))
+        
+        # 3. ML analysis tools - only if dataset is suitable for ML
+        target_column = self._identify_target_column(df)
+        
+        if target_column and dataset_size >= 50:  # Minimum viable dataset size
+            # Classification vs regression analysis
+            if df[target_column].nunique() <= 20:  # Classification
+                tools_to_run.extend([
+                    ("class_balance_assessor", {"data": df, "target_column": target_column}),
+                    ("data_separability_scorer", {"data": df, "target_column": target_column}),
+                ])
+            
+            # Feature importance - for any supervised learning
+            if num_features >= 3:  # Need multiple features
+                tools_to_run.append(("feature_importance_analyzer", {"data": df, "target_column": target_column}))
+            
+            # Baseline model performance - only for reasonable sized datasets
+            if dataset_size >= 100 and num_features >= 2:
+                tools_to_run.append(("baseline_model_performance", {"data": df, "target_column": target_column}))
+        
+        # 4. Skip expensive tools for very large datasets
+        if dataset_size > 10000:
+            # Remove computationally expensive tools for large datasets
+            expensive_tools = ["baseline_model_performance", "data_separability_scorer"]
+            tools_to_run = [(name, params) for name, params in tools_to_run 
+                          if name not in expensive_tools]
+        
+        return tools_to_run
+    
+    def _identify_target_column(self, df: pd.DataFrame) -> str:
+        """Smart target column identification"""
+        # Look for common target column names
+        potential_targets = ['target', 'label', 'class', 'y', 'outcome', 'result', 
+                           'prediction', 'response', 'dependent', 'output']
+        
+        for col in df.columns:
+            if col.lower() in potential_targets:
+                return col
+        
+        # If no obvious target, use heuristics
+        if len(df.columns) > 1:
+            # Check last column - often the target in ML datasets
+            last_col = df.columns[-1]
+            
+            # For classification: low cardinality
+            if df[last_col].nunique() <= min(20, len(df) // 10):
+                return last_col
+            
+            # For regression: numeric with reasonable range
+            if pd.api.types.is_numeric_dtype(df[last_col]):
+                return last_col
+        
+        return None
+
     def _extract_integrity_scores(self, analysis_results: Dict) -> Dict[str, float]:
         """Extract integrity-related scores"""
         scores = {}
