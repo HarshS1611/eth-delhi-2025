@@ -689,14 +689,30 @@ async def run_comprehensive_validation(dataset_path: str, dataset_name: str,
         )
 
 def create_comprehensive_bureau():
-    """Create a bureau with all agents"""
-    bureau = Bureau(name="comprehensive_validation_bureau", port=8003)
+    """Create a bureau with all agents following Innovation Labs pattern"""
+    bureau = Bureau(name="eth_delhi_2025_validation_bureau", port=8003)
     
-    # Add all agents to the bureau
+    # Create all agents with different ports
     orchestrator = OrchestratorAgent(name="orchestrator", port=8002)
-    bureau.add(orchestrator.agent)
     
-    return bureau
+    # Import and create other agents
+    from enhanced_validation_agent import DatasetValidationAgent
+    from legal_compliance_agent import LegalComplianceAgent
+    
+    validator = DatasetValidationAgent(name="dataset_validator", port=8000)
+    legal_agent = LegalComplianceAgent(name="legal_compliance", port=8001)
+    
+    # Add all agents to bureau for coordination
+    bureau.add(orchestrator.agent)
+    bureau.add(validator.agent)
+    bureau.add(legal_agent.agent)
+    
+    logger.info("🏢 Bureau created with all agents:")
+    logger.info(f"   📡 Orchestrator: {orchestrator.agent.address}")
+    logger.info(f"   🔍 Validator: {validator.agent.address}")
+    logger.info(f"   ⚖️ Legal Agent: {legal_agent.agent.address}")
+    
+    return bureau, orchestrator, validator, legal_agent
 
 # Following Innovation Labs documentation pattern - bureau.run() at module level
 if __name__ == "__main__":
@@ -711,6 +727,7 @@ if __name__ == "__main__":
     else:
         # Run comprehensive bureau (recommended pattern)
         print("🏢 Starting Comprehensive Validation Bureau...")
-        bureau = create_comprehensive_bureau()
+        bureau, orchestrator, validator, legal_agent = create_comprehensive_bureau()
         print("📡 Bureau will coordinate all validation agents")
+        print("🎯 Access the web dashboard at: http://localhost:8080/validation-dashboard")
         bureau.run()
