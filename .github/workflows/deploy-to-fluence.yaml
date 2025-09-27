@@ -20,7 +20,7 @@ jobs:
           mkdir -p ~/.ssh
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/ethdelhisshkey
           chmod 600 ~/.ssh/ethdelhisshkey
-          ssh-keyscan -H 81.15.150.161 >> ~/.ssh/known_hosts
+          ssh-keyscan -H 81.15.150.171 >> ~/.ssh/known_hosts
 
       - name: Deploy Validation API to Fluence VM
         run: |
