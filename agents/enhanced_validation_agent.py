@@ -30,7 +30,7 @@ class DatasetAnalysisRequest(Model):
     timestamp: str = datetime.now().isoformat()
 
 class DatasetAnalysisResult(Model):
-    """Complete dataset analysis result with all scoring"""
+    """Complete dataset analysis result with raw tool outputs"""
     success: bool
     request_id: str
     timestamp: str
@@ -38,25 +38,18 @@ class DatasetAnalysisResult(Model):
     # Basic dataset info
     dataset_info: Dict[str, Any]
     
-    # Individual tool scores (0-100)
-    integrity_scores: Dict[str, float]
-    statistical_scores: Dict[str, float] 
-    ml_usability_scores: Dict[str, float]
+    # Raw tool outputs (no score calculations)
+    raw_tool_outputs: Dict[str, Any]  # Contains all individual tool results as-is
     
     # High-level analysis results
     persona_tags: List[str]
     primary_persona: str
-    contextual_scores: Dict[str, float]
     
-    # Final synthesis
-    overall_utility_score: float
-    utility_grade: Dict[str, Any]
-    data_integrity_score: float
+    # Summary from agent (no combined scores)
     executive_summary: str
     
     # Actionable insights
     recommendations: List[str]
-    publication_readiness: Dict[str, Any]
     next_steps: List[str]
     
     # Error handling
@@ -249,32 +242,47 @@ class DatasetValidationAgent:
             scoring_result = await tool_registry.execute_tool("contextual_scoring_engine", analysis_results=analysis_results, persona_tags=persona_tags)
             contextual_scores = scoring_result.get("contextual_scores", {}) if scoring_result["success"] else {}
             
+            # DEBUG: Log contextual scoring results
+            print("\n=== CONTEXTUAL SCORING RESULTS ===")
+            print(f"Scoring result success: {scoring_result['success']}")
+            print(f"Full scoring result: {scoring_result}")
+            print(f"Extracted contextual scores: {contextual_scores}")
+            print("=================================\n")
+            
             # Final synthesis
             synthesis_result = await tool_registry.execute_tool("utility_score_synthesizer", analysis_results=analysis_results, persona_tags=persona_tags, contextual_scores=contextual_scores)
+            
+            # DEBUG: Log synthesis results
+            print("\n=== SYNTHESIS RESULTS ===")
+            print(f"Synthesis result success: {synthesis_result['success']}")
+            print(f"Full synthesis result: {synthesis_result}")
+            print("========================\n")
             
             if not synthesis_result["success"]:
                 return self._create_error_result(request, [synthesis_result["error"]], "Final synthesis failed")
             
             ctx.logger.info("✅ Step 4: High-level analysis completed")
             
-            # Step 5: Compile comprehensive result
+            # Step 5: Compile comprehensive result with raw tool outputs
+            raw_tool_outputs = {
+                "integrity_tools": integrity_scores,
+                "statistical_tools": statistical_scores, 
+                "ml_tools": ml_usability_scores,
+                "contextual_tools": contextual_scores,
+                "synthesis_result": synthesis_result,
+                "analysis_results": analysis_results  # All raw tool results
+            }
+            
             result = DatasetAnalysisResult(
                 success=True,
                 request_id=request.request_id or request.requester_id,
                 timestamp=datetime.now().isoformat(),
                 dataset_info=dataset_info,
-                integrity_scores=integrity_scores,
-                statistical_scores=statistical_scores,
-                ml_usability_scores=ml_usability_scores,
+                raw_tool_outputs=raw_tool_outputs,
                 persona_tags=persona_tags,
                 primary_persona=primary_persona,
-                contextual_scores=contextual_scores,
-                overall_utility_score=synthesis_result["overall_utility_score"],
-                utility_grade=synthesis_result["utility_grade"],
-                data_integrity_score=synthesis_result["data_integrity_score"],
                 executive_summary=synthesis_result["executive_summary"],
                 recommendations=synthesis_result["recommendations"],
-                publication_readiness=synthesis_result["publication_readiness"],
                 next_steps=synthesis_result["next_steps"]
             )
             
@@ -359,24 +367,28 @@ class DatasetValidationAgent:
         if num_numeric >= 2:
             tools_to_run.append(("feature_correlation_mapper", {"data": df}))
         
-        # 3. ML analysis tools - only if dataset is suitable for ML
+        # 3. ML analysis tools - run for datasets with sufficient complexity
         target_column = self._identify_target_column(df)
         
-        if target_column and dataset_size >= 50:  # Minimum viable dataset size
-            # Classification vs regression analysis
-            if df[target_column].nunique() <= 20:  # Classification
-                tools_to_run.extend([
-                    ("class_balance_assessor", {"data": df, "target_column": target_column}),
-                    ("data_separability_scorer", {"data": df, "target_column": target_column}),
-                ])
+        # Run ML tools even without explicit target - they can provide general ML usability insights
+        if dataset_size >= 20 and num_features >= 2:  # Very relaxed conditions
             
-            # Feature importance - for any supervised learning
-            if num_features >= 3:  # Need multiple features
+            # Always try feature importance (can work without explicit target)
+            if num_features >= 2:
                 tools_to_run.append(("feature_importance_analyzer", {"data": df, "target_column": target_column}))
             
-            # Baseline model performance - only for reasonable sized datasets
-            if dataset_size >= 100 and num_features >= 2:
+            # Baseline model performance (can auto-detect target or use last column)
+            if dataset_size >= 50:
                 tools_to_run.append(("baseline_model_performance", {"data": df, "target_column": target_column}))
+            
+            # Data separability (can work with auto-detected or assumed target)
+            if target_column or num_features >= 2:  # Either explicit target or try last column
+                actual_target = target_column or df.columns[-1]  # Fallback to last column
+                tools_to_run.append(("data_separability_scorer", {"data": df, "target_column": actual_target}))
+                
+                # Class balance if the target looks categorical
+                if df[actual_target].nunique() <= min(50, len(df) // 5):  # More relaxed
+                    tools_to_run.append(("class_balance_assessor", {"data": df, "target_column": actual_target}))
         
         # 4. Skip expensive tools for very large datasets
         if dataset_size > 10000:
@@ -416,20 +428,52 @@ class DatasetValidationAgent:
         """Extract integrity-related scores"""
         scores = {}
         
+        print("\n=== INTEGRITY SCORES EXTRACTION ===")
+        
         if "missing_value_analyzer_analysis" in analysis_results:
             result = analysis_results["missing_value_analyzer_analysis"]
+            print(f"Missing Value Analyzer: success={result['success']}, full_result={result}")
             if result["success"]:
-                scores["completeness"] = result.get("integrity_score", 0)
+                # Try both top-level and nested approach
+                integrity_score = result.get("integrity_score", 0)
+                if integrity_score == 0 and "analysis" in result:
+                    analysis_data = result.get("analysis", {})
+                    integrity_score = analysis_data.get("integrity_score", 0)
+                    print(f"  -> Found nested integrity_score: {integrity_score}")
+                scores["completeness"] = integrity_score
+                print(f"  -> Final completeness score: {integrity_score}")
+                print(f"  -> Available keys: {list(result.keys())}")
         
         if "duplicate_record_detector_analysis" in analysis_results:
             result = analysis_results["duplicate_record_detector_analysis"]
+            print(f"Duplicate Detector: success={result['success']}, full_result={result}")
             if result["success"]:
-                scores["duplicates"] = result.get("integrity_score", 0)
+                # Try both top-level and nested approach
+                integrity_score = result.get("integrity_score", 0)
+                if integrity_score == 0 and "analysis" in result:
+                    analysis_data = result.get("analysis", {})
+                    integrity_score = analysis_data.get("integrity_score", 0)
+                    print(f"  -> Found nested integrity_score: {integrity_score}")
+                scores["duplicates"] = integrity_score
+                print(f"  -> Final duplicates score: {integrity_score}")
+                print(f"  -> Available keys: {list(result.keys())}")
         
         if "data_type_consistency_checker_analysis" in analysis_results:
             result = analysis_results["data_type_consistency_checker_analysis"]
+            print(f"Data Type Checker: success={result['success']}, full_result={result}")
             if result["success"]:
-                scores["consistency"] = result.get("consistency_score", 0)
+                # Try both top-level and nested approach
+                consistency_score = result.get("consistency_score", 0)
+                if consistency_score == 0 and "analysis" in result:
+                    analysis_data = result.get("analysis", {})
+                    consistency_score = analysis_data.get("consistency_score", 0)
+                    print(f"  -> Found nested consistency_score: {consistency_score}")
+                scores["consistency"] = consistency_score
+                print(f"  -> Final consistency score: {consistency_score}")
+                print(f"  -> Available keys: {list(result.keys())}")
+        
+        print(f"Final integrity scores: {scores}")
+        print("================================\n")
         
         return scores
     
@@ -437,20 +481,44 @@ class DatasetValidationAgent:
         """Extract statistical analysis scores"""
         scores = {}
         
+        print("\n=== STATISTICAL SCORES EXTRACTION ===")
+        
         if "outlier_detection_engine_analysis" in analysis_results:
             result = analysis_results["outlier_detection_engine_analysis"]
+            print(f"Outlier Detection: success={result['success']}, full_result={result}")
             if result["success"]:
-                scores["outliers"] = result.get("outlier_score", 0)
+                # Try both top-level and nested approach
+                outlier_score = result.get("outlier_score", 0)
+                if outlier_score == 0 and "analysis" in result:
+                    analysis_data = result.get("analysis", {})
+                    outlier_score = analysis_data.get("outlier_score", 0)
+                    print(f"  -> Found nested outlier_score: {outlier_score}")
+                scores["outliers"] = outlier_score
+                print(f"  -> Final outliers score: {outlier_score}")
+                print(f"  -> Available keys: {list(result.keys())}")
         
         if "class_balance_assessor_analysis" in analysis_results:
             result = analysis_results["class_balance_assessor_analysis"]
+            print(f"Class Balance: success={result['success']}, full_result={result}")
             if result["success"]:
-                scores["class_balance"] = result.get("balance_score", 0)
+                balance_score = result.get("balance_score", 0)
+                scores["class_balance"] = balance_score
+                print(f"  -> Class balance score: {balance_score}")
         
         if "feature_correlation_mapper_analysis" in analysis_results:
             result = analysis_results["feature_correlation_mapper_analysis"]
+            print(f"Correlation Mapper: success={result['success']}, full_result={result}")
             if result["success"]:
-                scores["correlations"] = result.get("multicollinearity_score", 0)
+                # The score is nested in the 'analysis' field
+                analysis_data = result.get("analysis", {})
+                correlation_score = analysis_data.get("multicollinearity_score", 0)
+                scores["correlations"] = correlation_score
+                print(f"  -> Correlations score: {correlation_score}")
+                print(f"  -> Available keys in result: {list(result.keys())}")
+                print(f"  -> Available keys in analysis: {list(analysis_data.keys()) if analysis_data else 'No analysis data'}")
+        
+        print(f"Final statistical scores: {scores}")
+        print("==================================\n")
         
         return scores
     
@@ -458,20 +526,34 @@ class DatasetValidationAgent:
         """Extract ML usability scores"""
         scores = {}
         
+        print("\n=== ML USABILITY SCORES EXTRACTION ===")
+        
         if "baseline_model_performance_analysis" in analysis_results:
             result = analysis_results["baseline_model_performance_analysis"]
+            print(f"Baseline ML Performance: success={result['success']}, full_result={result}")
             if result["success"]:
-                scores["ml_performance"] = result.get("ml_usability_score", 0)
+                ml_score = result.get("ml_usability_score", 0)
+                scores["ml_performance"] = ml_score
+                print(f"  -> ML performance score: {ml_score}")
         
         if "feature_importance_analyzer_analysis" in analysis_results:
             result = analysis_results["feature_importance_analyzer_analysis"]
+            print(f"Feature Importance: success={result['success']}, full_result={result}")
             if result["success"]:
-                scores["feature_importance"] = result.get("information_score", 0)
+                importance_score = result.get("information_score", 0)
+                scores["feature_importance"] = importance_score
+                print(f"  -> Feature importance score: {importance_score}")
         
         if "data_separability_scorer_analysis" in analysis_results:
             result = analysis_results["data_separability_scorer_analysis"]
+            print(f"Data Separability: success={result['success']}, full_result={result}")
             if result["success"]:
-                scores["separability"] = result.get("separability_score", 0)
+                separability_score = result.get("separability_score", 0)
+                scores["separability"] = separability_score
+                print(f"  -> Separability score: {separability_score}")
+        
+        print(f"Final ML scores: {scores}")
+        print("===================================\n")
         
         return scores
     
@@ -482,18 +564,11 @@ class DatasetValidationAgent:
             request_id=request.request_id or request.requester_id,
             timestamp=datetime.now().isoformat(),
             dataset_info={},
-            integrity_scores={},
-            statistical_scores={},
-            ml_usability_scores={},
+            raw_tool_outputs={"error": {"summary": summary, "errors": errors}},
             persona_tags=[],
             primary_persona="#Unknown",
-            contextual_scores={},
-            overall_utility_score=0.0,
-            utility_grade={"grade": "F", "description": "Failed"},
-            data_integrity_score=0.0,
             executive_summary=summary,
             recommendations=[],
-            publication_readiness={"status": "failed"},
             next_steps=[],
             errors=errors
         )

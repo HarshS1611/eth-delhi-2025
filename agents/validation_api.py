@@ -88,17 +88,11 @@ class ValidationStatusResponse(BaseModel):
     estimated_completion: Optional[str] = None
 
 class ValidationResultAPI(BaseModel):
-    """API response model for validation results"""
+    """API response model for validation results - returns all individual tool results"""
     request_id: str
     success: bool
     dataset_name: str
     timestamp: str
-    
-    # Main scores for frontend display
-    overall_correctness_score: float
-    grade: str
-    data_quality_score: float
-    legal_compliance_score: float
     
     # Summary information
     executive_summary: str
@@ -110,8 +104,12 @@ class ValidationResultAPI(BaseModel):
     recommendations: List[str]
     warnings: List[str]
     
-    # Detailed breakdown
-    score_breakdown: Dict[str, float]
+    # All individual tool results - no consolidation
+    all_validation_data: Dict[str, Any]  # Complete validation agent result
+    raw_validation_results: Dict[str, Any]  # Individual tool outputs
+    raw_legal_results: Dict[str, Any]  # Legal analysis results
+    
+    # Agent tracking
     agents_used: List[str]
     
     # Error handling
@@ -421,29 +419,29 @@ async def process_validation_task(
             result.recommendations = ["Run: pip install -r requirements.txt"]
         
         if result.success:
-            # Convert to API format
+            # Extract all individual tool results from validation and legal agents
+            validation_data = result.validation_results if hasattr(result, 'validation_results') else {}
+            legal_data = result.legal_results if hasattr(result, 'legal_results') else {}
+            
+            # Build API result with ALL individual tool results - NO CONSOLIDATION
             api_result = {
                 "request_id": request_id,
                 "success": True,
                 "dataset_name": result.dataset_name,
                 "timestamp": result.timestamp,
-                "overall_correctness_score": result.overall_correctness_score,
-                "grade": result.grade,
-                "data_quality_score": result.data_quality_score,
-                "legal_compliance_score": result.legal_compliance_score,
                 "executive_summary": result.executive_summary,
                 "processing_time_seconds": result.processing_time_seconds,
                 "critical_issues": result.critical_issues,
                 "issues_found": result.critical_issues,  # For API compatibility
                 "recommendations": result.recommendations,
                 "warnings": [],
-                "score_breakdown": {
-                    "data_quality": result.data_quality_score,
-                    "legal_compliance": result.legal_compliance_score,
-                    "overall": result.overall_correctness_score
-                },
                 "agents_used": ["validation_agent", "legal_compliance_agent"] if ORCHESTRATOR_AVAILABLE else [],
-                "errors": result.errors
+                "errors": result.errors,
+                
+                # RETURN ALL RAW DATA - EVERY INDIVIDUAL TOOL RESULT
+                "all_validation_data": result.dict() if hasattr(result, 'dict') else {},
+                "raw_validation_results": validation_data,
+                "raw_legal_results": legal_data
             }
             
             validation_results[request_id] = api_result
@@ -461,20 +459,219 @@ async def process_validation_task(
             "success": False,
             "dataset_name": dataset_name,
             "timestamp": datetime.now().isoformat(),
-            "overall_correctness_score": 0.0,
-            "grade": "F",
-            "data_quality_score": 0.0,
-            "legal_compliance_score": 0.0,
             "executive_summary": f"Validation failed: {str(e)}",
             "processing_time_seconds": 0.0,
             "critical_issues": [str(e)],
             "issues_found": [str(e)],
             "recommendations": ["Fix validation errors before proceeding"],
             "warnings": [],
-            "score_breakdown": {"data_quality": 0.0, "legal_compliance": 0.0, "overall": 0.0},
             "agents_used": [],
-            "errors": [str(e)]
+            "errors": [str(e)],
+            "all_validation_data": {},
+            "raw_validation_results": {},
+            "raw_legal_results": {}
         }
+
+
+# ASI:One LLM Analysis Endpoint
+# ==============================
+
+class ASIOneAnalysisRequest(BaseModel):
+    """Request model for ASI:One LLM analysis"""
+    request_id: str  # ID from previous validation
+    asi_one_api_key: str
+    dataset_name: Optional[str] = "Dataset"
+
+class ASIOneAnalysisResponse(BaseModel):
+    """Response model for ASI:One LLM analysis"""
+    success: bool
+    timestamp: str
+    analysis_id: str
+    expert_analysis: str
+    quality_score: Optional[float]
+    model_used: str
+    token_usage: Dict[str, Any]
+    validation_source: str
+    errors: List[str] = []
+
+@app.post("/analyze/asi-one", response_model=ASIOneAnalysisResponse)
+async def analyze_with_asi_one_llm(request: ASIOneAnalysisRequest):
+    """
+    Analyze dataset quality using ASI:One Extended LLM
+    
+    This endpoint takes the raw tool results from a previous validation
+    and sends them to ASI:One Extended model for expert analysis.
+    """
+    
+    try:
+        # Import ASI:One analyzer
+        from asi_one_analyzer import analyze_with_asi_one
+        import pandas as pd
+        
+        # Check if validation results exist
+        if request.request_id not in validation_results:
+            raise HTTPException(
+                status_code=404, 
+                detail=f"Validation results not found for request_id: {request.request_id}"
+            )
+        
+        validation_data = validation_results[request.request_id]
+        
+        # Check if validation was successful
+        if not validation_data.get("success", False):
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot analyze failed validation. Please ensure validation completed successfully."
+            )
+        
+        # Prepare tool results for ASI:One
+        tool_results = {
+            "validation_tool_results": validation_data.get("raw_validation_results", {}),
+            "legal_tool_results": validation_data.get("raw_legal_results", {}),
+            "dataset_info": {
+                "name": validation_data.get("dataset_name", "Unknown"),
+                "timestamp": validation_data.get("timestamp"),
+                "processing_time": validation_data.get("processing_time_seconds", 0)
+            }
+        }
+        
+        # Create sample dataset context (we'll use mock data since we may not have the original file)
+        # In production, you might want to store a sample of the original dataset
+        dataset_sample = pd.DataFrame({
+            "sample_note": ["Original dataset sample would be provided here for better context"],
+            "columns_analyzed": [f"Dataset had multiple columns - see tool results for details"],
+            "note": ["This is a placeholder - ideally store dataset sample during validation"]
+        })
+        
+        # If we have dataset info from validation, create a better sample
+        all_validation_data = validation_data.get("all_validation_data", {})
+        if "dataset_info" in all_validation_data:
+            dataset_info = all_validation_data["dataset_info"]
+            # Create a mock sample based on column names and types
+            if "columns" in dataset_info and "dtypes" in dataset_info:
+                sample_data = {}
+                for col in dataset_info["columns"][:10]:  # Limit to first 10 columns
+                    dtype = dataset_info["dtypes"].get(col, "object")
+                    if "int" in str(dtype):
+                        sample_data[col] = [1, 2, 3, 4, 5]
+                    elif "float" in str(dtype):
+                        sample_data[col] = [1.1, 2.2, 3.3, 4.4, 5.5]
+                    else:
+                        sample_data[col] = ["sample", "data", "for", "context", "analysis"]
+                
+                dataset_sample = pd.DataFrame(sample_data)
+        
+        # Call ASI:One analyzer
+        logger.info(f"Starting ASI:One analysis for request {request.request_id}")
+        
+        analysis_result = await analyze_with_asi_one(
+            api_key=request.asi_one_api_key,
+            tool_results=tool_results,
+            dataset_sample=dataset_sample,
+            dataset_name=request.dataset_name or validation_data.get("dataset_name", "Dataset")
+        )
+        
+        if not analysis_result.get("success", False):
+            raise Exception(analysis_result.get("error", "ASI:One analysis failed"))
+        
+        # Generate analysis ID
+        analysis_id = str(uuid.uuid4())
+        
+        # Extract analysis details
+        analysis_data = analysis_result.get("analysis", {})
+        
+        logger.info(f"ASI:One analysis completed for request {request.request_id}")
+        
+        return ASIOneAnalysisResponse(
+            success=True,
+            timestamp=analysis_result.get("timestamp", datetime.now().isoformat()),
+            analysis_id=analysis_id,
+            expert_analysis=analysis_data.get("expert_analysis", ""),
+            quality_score=analysis_data.get("quality_score"),
+            model_used=analysis_result.get("model_used", "asi1-extended"),
+            token_usage=analysis_data.get("token_usage", {}),
+            validation_source=request.request_id,
+            errors=[]
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"ASI:One analysis error: {str(e)}")
+        return ASIOneAnalysisResponse(
+            success=False,
+            timestamp=datetime.now().isoformat(),
+            analysis_id="",
+            expert_analysis="",
+            quality_score=None,
+            model_used="asi1-extended",
+            token_usage={},
+            validation_source=request.request_id,
+            errors=[str(e)]
+        )
+
+
+@app.get("/analyze/demo/{dataset_type}")
+async def demo_asi_one_analysis(
+    dataset_type: str,
+    asi_one_api_key: str,
+    background_tasks: BackgroundTasks
+):
+    """
+    Demo endpoint: Run full validation + ASI:One analysis
+    
+    This endpoint demonstrates the complete workflow:
+    1. Run validation on demo dataset
+    2. Automatically analyze results with ASI:One LLM
+    """
+    
+    if dataset_type not in ["healthcare", "airquality"]:
+        raise HTTPException(status_code=400, detail="Invalid dataset type. Use 'healthcare' or 'airquality'")
+    
+    try:
+        # First, run the demo validation
+        if dataset_type == "healthcare":
+            validation_response = await demo_healthcare_validation(background_tasks)
+        else:
+            validation_response = await demo_airquality_validation(background_tasks)
+        
+        request_id = validation_response["request_id"]
+        
+        # Wait a moment for validation to complete (in production, you'd poll the status)
+        await asyncio.sleep(2)
+        
+        # Check if validation completed
+        if validation_status.get(request_id) != "completed":
+            return {
+                "message": "Validation started. Please wait for completion before ASI:One analysis.",
+                "validation_request_id": request_id,
+                "next_steps": [
+                    f"1. Check validation status: GET /validate/status/{request_id}",
+                    f"2. When completed, run ASI:One analysis: POST /analyze/asi-one",
+                    "3. Use the validation request_id and your ASI:One API key"
+                ]
+            }
+        
+        # Run ASI:One analysis
+        analysis_request = ASIOneAnalysisRequest(
+            request_id=request_id,
+            asi_one_api_key=asi_one_api_key,
+            dataset_name=f"Demo {dataset_type.title()} Dataset"
+        )
+        
+        analysis_result = await analyze_with_asi_one_llm(analysis_request)
+        
+        return {
+            "validation_completed": True,
+            "validation_request_id": request_id,
+            "asi_one_analysis": analysis_result,
+            "demo_workflow": "completed"
+        }
+        
+    except Exception as e:
+        logger.error(f"Demo ASI:One analysis error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Demo analysis failed: {str(e)}")
+
 
 # Development server
 if __name__ == "__main__":
@@ -492,6 +689,9 @@ if __name__ == "__main__":
     print("  • GET  /validate/result/{id} - Get validation results")
     print("  • GET  /validate/demo/healthcare - Demo healthcare validation")
     print("  • GET  /validate/demo/airquality - Demo air quality validation")
+    print("  🤖 ASI:One LLM Analysis:")
+    print("  • POST /analyze/asi-one     - Analyze with ASI:One Extended LLM")
+    print("  • GET  /analyze/demo/{type}?asi_one_api_key=KEY - Full demo workflow")
     print("  • GET  /docs                - Interactive API documentation")
     print("=" * 50)
     

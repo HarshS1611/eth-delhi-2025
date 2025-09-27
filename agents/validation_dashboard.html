@@ -555,6 +555,85 @@
                             </div>
                         </div>
                         
+                        <!-- Individual Tool Results Section -->
+                        <div style="margin-top: 30px; padding: 20px; background: #f8f9fa; border-radius: 10px;">
+                            <h4 style="color: #667eea; margin-bottom: 20px;">🔧 Individual Tool Results (No Consolidation)</h4>
+                            
+                            <!-- Raw Data Dump - NO CONSOLIDATION -->
+                            <div style="background: #e9ecef; padding: 15px; border-radius: 8px; margin-bottom: 20px; font-family: monospace; font-size: 11px; max-height: 400px; overflow-y: auto;">
+                                <strong>� ALL RAW VALIDATION DATA (No Consolidation):</strong><br><br>
+                                
+                                <strong>All Validation Data:</strong><br>
+                                <pre style="white-space: pre-wrap; word-wrap: break-word;">${JSON.stringify(result.all_validation_data || {}, null, 2)}</pre><br>
+                                
+                                <strong>Raw Validation Results:</strong><br>
+                                <pre style="white-space: pre-wrap; word-wrap: break-word;">${JSON.stringify(result.raw_validation_results || {}, null, 2)}</pre><br>
+                                
+                                <strong>Raw Legal Results:</strong><br>
+                                <pre style="white-space: pre-wrap; word-wrap: break-word;">${JSON.stringify(result.raw_legal_results || {}, null, 2)}</pre>
+                            </div>
+                            
+                            <!-- Integrity Scores from Raw Data -->
+                            ${result.all_validation_data && result.all_validation_data.integrity_scores ? `
+                            <div style="margin-bottom: 20px;">
+                                <h5 style="color: #28a745; margin-bottom: 15px;">📊 Data Integrity Scores (From Raw Data)</h5>
+                                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px;">
+                                    ${Object.entries(result.all_validation_data.integrity_scores).map(([tool, score]) => `
+                                        <div style="background: white; padding: 10px; border-radius: 5px; border-left: 4px solid #28a745;">
+                                            <strong>${tool.replace(/_/g, ' ').toUpperCase()}</strong><br>
+                                            <span style="font-size: 1.2em; color: #28a745;">${score}</span>
+                                        </div>
+                                    `).join('')}
+                                </div>
+                            </div>
+                            ` : '<p style="color: #666;">No integrity scores in raw data</p>'}
+                            
+                            <!-- Statistical Scores from Raw Data -->
+                            ${result.all_validation_data && result.all_validation_data.statistical_scores ? `
+                            <div style="margin-bottom: 20px;">
+                                <h5 style="color: #17a2b8; margin-bottom: 15px;">📈 Statistical Analysis Scores (From Raw Data)</h5>
+                                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px;">
+                                    ${Object.entries(result.all_validation_data.statistical_scores).map(([tool, score]) => `
+                                        <div style="background: white; padding: 10px; border-radius: 5px; border-left: 4px solid #17a2b8;">
+                                            <strong>${tool.replace(/_/g, ' ').toUpperCase()}</strong><br>
+                                            <span style="font-size: 1.2em; color: #17a2b8;">${score}</span>
+                                        </div>
+                                    `).join('')}
+                                </div>
+                            </div>
+                            ` : '<p style="color: #666;">No statistical scores in raw data</p>'}
+                            
+                            <!-- ML Scores -->
+                            ${result.individual_ml_scores && Object.keys(result.individual_ml_scores).length > 0 ? `
+                            <div style="margin-bottom: 20px;">
+                                <h5 style="color: #ffc107; margin-bottom: 15px;">🤖 ML Usability Scores</h5>
+                                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px;">
+                                    ${Object.entries(result.individual_ml_scores).map(([tool, score]) => `
+                                        <div style="background: white; padding: 10px; border-radius: 5px; border-left: 4px solid #ffc107;">
+                                            <strong>${tool.replace(/_/g, ' ').toUpperCase()}</strong><br>
+                                            <span style="font-size: 1.2em; color: #856404;">${score}</span>
+                                        </div>
+                                    `).join('')}
+                                </div>
+                            </div>
+                            ` : '<p style="color: #666;">No ML scores available</p>'}
+                            
+                            <!-- Contextual Scores from Raw Data -->
+                            ${result.all_validation_data && result.all_validation_data.contextual_scores ? `
+                            <div style="margin-bottom: 20px;">
+                                <h5 style="color: #fd7e14; margin-bottom: 15px;">🎯 Contextual Analysis Scores (From Raw Data)</h5>
+                                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px;">
+                                    ${Object.entries(result.all_validation_data.contextual_scores).map(([context, score]) => `
+                                        <div style="background: white; padding: 10px; border-radius: 5px; border-left: 4px solid #fd7e14;">
+                                            <strong>${context.replace(/_/g, ' ').toUpperCase()}</strong><br>
+                                            <span style="font-size: 1.2em; color: #fd7e14;">${score}</span>
+                                        </div>
+                                    `).join('')}
+                                </div>
+                            </div>
+                            ` : '<p style="color: #666;">No contextual scores in raw data</p>'}
+                        </div>
+                        
                         ${
                           result.critical_issues &&
                           result.critical_issues.length > 0

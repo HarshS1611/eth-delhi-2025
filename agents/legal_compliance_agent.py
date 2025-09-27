@@ -36,35 +36,31 @@ class LegalComplianceRequest(Model):
     requester_address: str
 
 class LegalComplianceResult(Model):
-    """Result model for legal compliance analysis"""
+    """Result model for legal compliance analysis with raw tool outputs"""
     request_id: str
     success: bool
     dataset_name: str
     analysis_type: str
     
-    # Fingerprinting results
-    dataset_fingerprint: Optional[str] = None
-    verification_status: Optional[str] = None
-    originality_score: Optional[float] = None
+    # Raw tool outputs (no score calculations)
+    raw_tool_outputs: Dict[str, Any]  # Contains all individual legal tool results as-is
     
-    # PII scanning results
-    pii_risk_score: Optional[float] = None
-    pii_risk_level: Optional[str] = None
-    columns_with_pii: Optional[int] = None
-    
-    # Overall compliance
-    overall_risk_level: str
-    legal_status: str
+    # Summary from agent (no combined scores)
+    legal_summary: str
     requires_action: bool
-    overall_compliance_score: float = 50.0  # 0-100 score for overall compliance
     
-    # Detailed results (truncated for message size)
+    # Detailed results
     key_findings: List[str]
     critical_recommendations: List[str]
     
     # Error handling
     error_message: Optional[str] = None
     analysis_timestamp: str
+    
+    # Processing info
+    timestamp: str = datetime.now().isoformat()
+    processing_time_seconds: float = 0.0
+    errors: List[str] = []
 
 class ComplianceStatusRequest(Model):
     """Request model for compliance status updates"""
@@ -177,11 +173,12 @@ class LegalComplianceAgent:
                     success=False,
                     dataset_name=msg.dataset_name,
                     analysis_type=msg.analysis_type,
+                    key_findings=[f"Analysis failed: {str(e)}"],
                     overall_risk_level="Unknown",
                     legal_status="Analysis Failed",
                     requires_action=True,
-                    overall_compliance_score=0.0,  # Failed analysis gets 0 score
-                    key_findings=[],
+                    raw_tool_outputs={"error": {"message": str(e), "timestamp": datetime.now().isoformat()}},
+                    legal_summary=f"Analysis failed: {str(e)}",
                     critical_recommendations=[f"Analysis failed: {str(e)}"],
                     error_message=str(e),
                     analysis_timestamp=datetime.now().isoformat()
@@ -219,6 +216,10 @@ class LegalComplianceAgent:
     async def _send_status_update(self, ctx: Context, sender: str, request_id: str, 
                                  status: str, progress: float, step: str):
         """Send status update to requester"""
+        
+        # Skip status updates if using DummyContext (direct calls)
+        if not hasattr(ctx, 'send') or ctx.__class__.__name__ == 'DummyContext':
+            return
         
         update = ComplianceStatusUpdate(
             request_id=request_id,
@@ -355,11 +356,24 @@ class LegalComplianceAgent:
             originality_score, pii_risk_score, overall_risk_level
         )
         
+        # Compile raw tool outputs
+        raw_tool_outputs = {}
+        if fingerprint_result:
+            raw_tool_outputs["dataset_fingerprinting"] = fingerprint_result
+        if pii_result:
+            raw_tool_outputs["pii_scanner"] = pii_result
+        
+        # Generate legal summary
+        legal_summary = f"Legal Analysis Complete - Risk Level: {overall_risk_level}, Compliance Score: {compliance_score:.1f}/100"
+        if requires_action:
+            legal_summary += f", Action Required: {len(critical_recommendations)} recommendations"
+        
         return LegalComplianceResult(
             request_id=msg.request_id,
             success=True,
             dataset_name=msg.dataset_name,
             analysis_type=msg.analysis_type,
+            key_findings=key_findings,
             dataset_fingerprint=dataset_fingerprint,
             verification_status=verification_status,
             originality_score=originality_score,
@@ -369,8 +383,8 @@ class LegalComplianceAgent:
             overall_risk_level=overall_risk_level,
             legal_status=legal_status,
             requires_action=requires_action,
-            overall_compliance_score=compliance_score,
-            key_findings=key_findings[:10],  # Limit for message size
+            raw_tool_outputs=raw_tool_outputs,
+            legal_summary=legal_summary,
             critical_recommendations=critical_recommendations[:5],  # Limit for message size
             analysis_timestamp=datetime.now().isoformat()
         )

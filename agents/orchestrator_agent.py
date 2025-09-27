@@ -34,7 +34,7 @@ class ComprehensiveValidationRequest(Model):
     timestamp: str = datetime.now().isoformat()
 
 class ComprehensiveValidationResult(Model):
-    """Complete validation result combining data quality and legal compliance"""
+    """Complete validation result with raw tool outputs only"""
     request_id: str
     success: bool
     timestamp: str
@@ -44,20 +44,9 @@ class ComprehensiveValidationResult(Model):
     dataset_name: str
     dataset_info: Dict[str, Any]
     
-    # Overall scores
-    overall_correctness_score: float  # 0-100 combined score
-    data_quality_score: float        # 0-100 from validation agent
-    legal_compliance_score: float    # 0-100 from legal agent
-    grade: str                       # A, B, C, D, F
-    
-    # Analysis results
-    validation_results: Optional[Dict[str, Any]] = None
-    legal_results: Optional[Dict[str, Any]] = None
-    
-    # Summary and recommendations
-    executive_summary: str
-    critical_issues: List[str] = []
-    recommendations: List[str] = []
+    # Raw tool results only (no summaries or combined data)
+    validation_tool_results: Optional[Dict[str, Any]] = None  # Raw outputs from all validation tools
+    legal_tool_results: Optional[Dict[str, Any]] = None       # Raw outputs from all legal tools
     
     # Status and errors
     validation_status: str = "unknown"
@@ -295,18 +284,11 @@ class OrchestratorAgent:
                 request_id=request.request_id,
                 timestamp=datetime.now().isoformat(),
                 dataset_info={"name": "unknown", "error": str(e)},
-                integrity_scores={},
-                statistical_scores={},
-                ml_usability_scores={},
+                raw_tool_outputs={"error": str(e)},
                 persona_tags=[],
                 primary_persona="unknown",
-                contextual_scores={},
-                overall_utility_score=0.0,
-                utility_grade={"grade": "F", "description": "Analysis failed"},
-                data_integrity_score=0.0,
                 executive_summary=f"Analysis failed: {str(e)}",
                 recommendations=[],
-                publication_readiness={},
                 next_steps=[],
                 errors=[str(e)]
             )
@@ -342,15 +324,13 @@ class OrchestratorAgent:
                 success=False,
                 dataset_name=request.dataset_name,
                 analysis_type=request.analysis_type,
-                dataset_fingerprint=None,
-                verification_status="failed",
-                originality_score=0.0,
-                pii_risk_score=100.0,  # Assume high risk on failure
-                pii_detected_entities=[],
-                compliance_summary=f"Legal analysis failed: {str(e)}",
-                recommendations=["Resolve analysis errors before proceeding"],
-                overall_compliance_score=0.0,
-                compliance_grade="F",
+                raw_tool_outputs={"error": str(e)},
+                legal_summary=f"Legal analysis failed: {str(e)}",
+                requires_action=True,
+                key_findings=[],
+                critical_recommendations=["Resolve analysis errors before proceeding"],
+                error_message=str(e),
+                analysis_timestamp=datetime.now().isoformat(),
                 timestamp=datetime.now().isoformat(),
                 processing_time_seconds=0.0,
                 errors=[str(e)]
@@ -375,23 +355,9 @@ class OrchestratorAgent:
             should_run_legal = False
             reason = "Validation failed - skipping legal analysis"
         else:
-            # Smart decision based on validation scores
-            utility_score = validation_result.overall_utility_score
-            integrity_score = validation_result.data_integrity_score
+            # Always run legal analysis when requested
+            ctx.logger.info(f"🎯 Running legal analysis for {request_id}")
             
-            # Run legal analysis only if scores suggest dataset has potential value
-            min_threshold = 50.0  # Configurable threshold
-            
-            if utility_score >= min_threshold or integrity_score >= min_threshold:
-                should_run_legal = True
-                reason = f"High scores detected (utility: {utility_score:.1f}, integrity: {integrity_score:.1f}) - triggering legal analysis"
-            else:
-                should_run_legal = False
-                reason = f"Low scores (utility: {utility_score:.1f}, integrity: {integrity_score:.1f}) - skipping expensive legal analysis"
-        
-        ctx.logger.info(f"🎯 Legal analysis decision for {request_id}: {should_run_legal} - {reason}")
-        
-        if should_run_legal:
             # Trigger legal analysis
             original_request = request_data["request"]
             legal_request = LegalComplianceRequest(
@@ -405,11 +371,6 @@ class OrchestratorAgent:
             
             self.active_requests[request_id]["legal_status"] = "running"
             await self._run_legal_analysis(ctx, legal_request)
-        else:
-            # Skip legal analysis
-            self.active_requests[request_id]["legal_status"] = "skipped"
-            self.active_requests[request_id]["legal_result"] = None
-            self.active_requests[request_id]["legal_skip_reason"] = reason
 
     async def _check_and_combine_results(self, ctx: Context, request_id: str):
         """Check if both analyses are complete and combine results"""
@@ -443,59 +404,20 @@ class OrchestratorAgent:
                 await self._send_error_result(ctx, request_data["requester"], request_id, str(e))
     
     async def _combine_validation_results(self, request_data: Dict) -> ComprehensiveValidationResult:
-        """Combine validation and legal compliance results"""
+        """Combine validation and legal compliance results - pass through raw results without score calculations"""
         validation_result = request_data["validation_result"]
         legal_result = request_data["legal_result"]
         original_request = request_data["request"]
         processing_time = (datetime.now() - request_data["start_time"]).total_seconds()
         
-        # Calculate overall scores
-        data_quality_score = validation_result.overall_utility_score if validation_result and validation_result.success else 0.0
+        # Extract raw tool outputs (no score calculations)
+        validation_tool_results = None
+        if validation_result and hasattr(validation_result, 'raw_tool_outputs'):
+            validation_tool_results = validation_result.raw_tool_outputs
         
-        # Handle conditional legal analysis
-        legal_status = request_data.get("legal_status", "unknown")
-        if legal_status == "skipped":
-            # If legal analysis was skipped, use data quality score as primary
-            legal_compliance_score = 50.0  # Neutral score for skipped legal analysis
-            overall_score = data_quality_score  # 100% data quality when legal is skipped
-            skip_reason = request_data.get("legal_skip_reason", "Legal analysis skipped")
-        else:
-            # Normal legal analysis completed
-            legal_compliance_score = legal_result.overall_compliance_score if legal_result and legal_result.success else 50.0
-            # Weighted combination (70% data quality, 30% legal compliance)
-            overall_score = (data_quality_score * 0.7) + (legal_compliance_score * 0.3)
-            skip_reason = None
-        
-        # Determine grade
-        if overall_score >= 90:
-            grade = "A"
-        elif overall_score >= 80:
-            grade = "B"
-        elif overall_score >= 70:
-            grade = "C"
-        elif overall_score >= 60:
-            grade = "D"
-        else:
-            grade = "F"
-        
-        # Collect critical issues
-        critical_issues = []
-        if validation_result and hasattr(validation_result, 'errors') and validation_result.errors:
-            critical_issues.extend(validation_result.errors[:3])
-        if legal_result and legal_result.critical_recommendations:
-            critical_issues.extend(legal_result.critical_recommendations[:2])
-        
-        # Collect recommendations
-        recommendations = []
-        if validation_result and hasattr(validation_result, 'recommendations') and validation_result.recommendations:
-            recommendations.extend(validation_result.recommendations[:3])
-        if legal_result and legal_result.key_findings:
-            recommendations.extend(legal_result.key_findings[:2])
-        
-        # Generate executive summary
-        executive_summary = self._generate_executive_summary(
-            original_request.dataset_name, overall_score, grade, data_quality_score, legal_compliance_score, skip_reason
-        )
+        legal_tool_results = None
+        if legal_result and hasattr(legal_result, 'raw_tool_outputs'):
+            legal_tool_results = legal_result.raw_tool_outputs
         
         return ComprehensiveValidationResult(
             request_id=original_request.request_id,
@@ -504,40 +426,11 @@ class OrchestratorAgent:
             processing_time_seconds=round(processing_time, 2),
             dataset_name=original_request.dataset_name,
             dataset_info=validation_result.dataset_info if validation_result else {"name": original_request.dataset_name},
-            overall_correctness_score=round(overall_score, 1),
-            data_quality_score=round(data_quality_score, 1),
-            legal_compliance_score=round(legal_compliance_score, 1),
-            grade=grade,
-            validation_results=validation_result.dict() if validation_result else None,
-            legal_results=legal_result.dict() if legal_result else None,
-            executive_summary=executive_summary,
-            critical_issues=critical_issues,
-            recommendations=recommendations,
+            validation_tool_results=validation_tool_results,
+            legal_tool_results=legal_tool_results,
             validation_status=request_data["validation_status"],
             legal_status=request_data["legal_status"]
         )
-    
-    def _generate_executive_summary(self, dataset_name: str, overall_score: float, grade: str, 
-                                  data_quality_score: float, legal_compliance_score: float, skip_reason: str = None) -> str:
-        """Generate an executive summary of the analysis"""
-        if overall_score >= 85:
-            quality_desc = "excellent"
-        elif overall_score >= 70:
-            quality_desc = "good"
-        elif overall_score >= 55:
-            quality_desc = "acceptable"
-        else:
-            quality_desc = "poor"
-        
-        legal_analysis_note = ""
-        if skip_reason:
-            legal_analysis_note = f" Legal analysis was intelligently skipped: {skip_reason}."
-        
-        return (f"Dataset '{dataset_name}' achieved an overall correctness score of {overall_score:.1f}/100 "
-                f"(Grade {grade}), indicating {quality_desc} quality. "
-                f"Data quality scored {data_quality_score:.1f}/100 and legal compliance scored {legal_compliance_score:.1f}/100. "
-                f"{legal_analysis_note} "
-                f"{'Recommended for production use.' if overall_score >= 80 else 'Improvements needed before production use.'}")
     
     async def _send_error_result(self, ctx: Context, requester: str, request_id: str, error_message: str):
         """Send an error result"""
@@ -548,11 +441,8 @@ class OrchestratorAgent:
             processing_time_seconds=0.0,
             dataset_name="unknown",
             dataset_info={"error": error_message},
-            overall_correctness_score=0.0,
-            data_quality_score=0.0,
-            legal_compliance_score=0.0,
-            grade="F",
-            executive_summary=f"Validation failed: {error_message}",
+            validation_tool_results=None,
+            legal_tool_results=None,
             errors=[error_message],
             validation_status="failed",
             legal_status="failed"
@@ -622,30 +512,17 @@ async def run_comprehensive_validation(dataset_path: str, dataset_name: str,
                     dummy_ctx, legal_request, dataset
                 )
         
-        # Combine results
+        # Combine results - pass through raw tool outputs without calculations
         processing_time = (datetime.now() - start_time).total_seconds()
         
-        # Calculate scores
-        data_quality_score = validation_result.overall_utility_score if validation_result.success else 0.0
-        legal_compliance_score = legal_result.overall_compliance_score if legal_result and legal_result.success else 50.0
-        overall_score = (data_quality_score * 0.7) + (legal_compliance_score * 0.3)
+        # Extract raw tool outputs
+        validation_tool_results = None
+        if validation_result and hasattr(validation_result, 'raw_tool_outputs'):
+            validation_tool_results = validation_result.raw_tool_outputs
         
-        # Determine grade
-        if overall_score >= 90:
-            grade = "A"
-        elif overall_score >= 80:
-            grade = "B"
-        elif overall_score >= 70:
-            grade = "C"
-        elif overall_score >= 60:
-            grade = "D"
-        else:
-            grade = "F"
-        
-        # Generate summary
-        quality_desc = "excellent" if overall_score >= 85 else "good" if overall_score >= 70 else "acceptable" if overall_score >= 55 else "poor"
-        executive_summary = (f"Dataset '{dataset_name}' achieved an overall correctness score of {overall_score:.1f}/100 "
-                           f"(Grade {grade}), indicating {quality_desc} quality.")
+        legal_tool_results = None
+        if legal_result and hasattr(legal_result, 'raw_tool_outputs'):
+            legal_tool_results = legal_result.raw_tool_outputs
         
         return ComprehensiveValidationResult(
             request_id=request_id,
@@ -654,17 +531,8 @@ async def run_comprehensive_validation(dataset_path: str, dataset_name: str,
             processing_time_seconds=round(processing_time, 2),
             dataset_name=dataset_name,
             dataset_info=validation_result.dataset_info,
-            overall_correctness_score=round(overall_score, 1),
-            data_quality_score=round(data_quality_score, 1),
-            legal_compliance_score=round(legal_compliance_score, 1),
-            grade=grade,
-            validation_results=validation_result.dict(),
-            legal_results=legal_result.dict() if legal_result else None,
-            executive_summary=executive_summary,
-            critical_issues=((validation_result.errors[:3] if hasattr(validation_result, 'errors') and validation_result.errors else []) + 
-                           (legal_result.critical_recommendations[:2] if legal_result and legal_result.critical_recommendations else [])),
-            recommendations=((validation_result.recommendations[:3] if hasattr(validation_result, 'recommendations') and validation_result.recommendations else []) + 
-                           (legal_result.key_findings[:2] if legal_result and legal_result.key_findings else [])),
+            validation_tool_results=validation_tool_results,
+            legal_tool_results=legal_tool_results,
             validation_status="completed",
             legal_status="completed" if include_legal else "skipped"
         )
@@ -678,11 +546,8 @@ async def run_comprehensive_validation(dataset_path: str, dataset_name: str,
             processing_time_seconds=round(processing_time, 2),
             dataset_name=dataset_name,
             dataset_info={"error": str(e)},
-            overall_correctness_score=0.0,
-            data_quality_score=0.0,
-            legal_compliance_score=0.0,
-            grade="F",
-            executive_summary=f"Validation failed: {str(e)}",
+            validation_tool_results=None,
+            legal_tool_results=None,
             errors=[str(e)],
             validation_status="failed",
             legal_status="failed"
@@ -690,7 +555,7 @@ async def run_comprehensive_validation(dataset_path: str, dataset_name: str,
 
 def create_comprehensive_bureau():
     """Create a bureau with all agents following Innovation Labs pattern"""
-    bureau = Bureau(name="eth_delhi_2025_validation_bureau", port=8003)
+    bureau = Bureau(port=8003)
     
     # Create all agents with different ports
     orchestrator = OrchestratorAgent(name="orchestrator", port=8002)

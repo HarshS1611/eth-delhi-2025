@@ -83,6 +83,7 @@ class LegalComplianceResult(BaseResponse):
     framework_scores: Dict[str, float] = Field(default_factory=dict, description="Scores by compliance framework")
     
     # Detailed findings
+    key_findings: List[str] = Field(default_factory=list, description="Key compliance findings summary")
     pii_findings: Dict[str, Any] = Field(default_factory=dict, description="PII scanning results")
     fingerprint_results: Dict[str, Any] = Field(default_factory=dict, description="Dataset fingerprinting results")
     risk_assessment: Dict[str, Any] = Field(default_factory=dict, description="Risk assessment details")

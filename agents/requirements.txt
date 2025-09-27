@@ -2,12 +2,12 @@
 uagents>=0.14.0
 
 # Data processing and analysis
-pandas>=1.5.0
-numpy>=1.21.0
+pandas>=2.0.0
+numpy>=1.24.0
 
 # Optional ML dependencies (for advanced analysis tools)
-scikit-learn>=1.0.0
-scipy>=1.7.0
+scikit-learn>=1.3.0
+scipy>=1.10.0
 
 # Additional data format support
 openpyxl>=3.0.0  # For Excel file support
@@ -17,10 +17,14 @@ pyarrow>=5.0.0   # For Parquet file support
 spacy>=3.4.0  # For Named Entity Recognition (NER) in PII scanning
 # Note: Also run: python -m spacy download en_core_web_sm
 
+# ASI:One LLM integration
+httpx>=0.24.0  # For async HTTP requests to ASI:One API
+
 # Web API framework and server
 fastapi>=0.104.0
 uvicorn[standard]>=0.24.0
 python-multipart>=0.0.6  # For file upload support
+pydantic>=2.0.0  # For data validation and settings (included with FastAPI but explicit)
 
 # Development and testing
 pytest>=7.0.0
