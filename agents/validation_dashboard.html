@@ -1,0 +1,644 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Dataset Validation Dashboard - ETH Delhi 2025</title>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+          sans-serif;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        min-height: 100vh;
+        padding: 20px;
+      }
+
+      .container {
+        max-width: 1200px;
+        margin: 0 auto;
+      }
+
+      .header {
+        text-align: center;
+        color: white;
+        margin-bottom: 30px;
+      }
+
+      .header h1 {
+        font-size: 2.5rem;
+        margin-bottom: 10px;
+        text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
+      }
+
+      .header p {
+        font-size: 1.1rem;
+        opacity: 0.9;
+      }
+
+      .dashboard {
+        display: grid;
+        grid-template-columns: 1fr 2fr;
+        gap: 30px;
+        margin-bottom: 30px;
+      }
+
+      .card {
+        background: white;
+        border-radius: 15px;
+        padding: 25px;
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+      }
+
+      .card h2 {
+        color: #333;
+        margin-bottom: 20px;
+        font-size: 1.5rem;
+        border-bottom: 2px solid #e0e0e0;
+        padding-bottom: 10px;
+      }
+
+      .upload-section {
+        height: fit-content;
+      }
+
+      .upload-area {
+        border: 2px dashed #ccc;
+        border-radius: 10px;
+        padding: 40px 20px;
+        text-align: center;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        margin-bottom: 20px;
+      }
+
+      .upload-area:hover {
+        border-color: #667eea;
+        background: #f8f9ff;
+      }
+
+      .upload-area.dragover {
+        border-color: #667eea;
+        background: #f0f4ff;
+      }
+
+      .file-input {
+        display: none;
+      }
+
+      .demo-buttons {
+        display: flex;
+        gap: 10px;
+        margin-top: 20px;
+      }
+
+      .btn {
+        padding: 12px 24px;
+        border: none;
+        border-radius: 8px;
+        cursor: pointer;
+        font-weight: 600;
+        transition: all 0.3s ease;
+        text-decoration: none;
+        display: inline-block;
+        text-align: center;
+      }
+
+      .btn-primary {
+        background: linear-gradient(45deg, #667eea, #764ba2);
+        color: white;
+      }
+
+      .btn-primary:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+      }
+
+      .btn-secondary {
+        background: #f1f1f1;
+        color: #333;
+      }
+
+      .btn-secondary:hover {
+        background: #e0e0e0;
+      }
+
+      .results-section {
+        min-height: 400px;
+      }
+
+      .result-item {
+        background: #f8f9fa;
+        border-radius: 10px;
+        padding: 20px;
+        margin-bottom: 20px;
+        border-left: 5px solid #28a745;
+      }
+
+      .result-item.processing {
+        border-left-color: #ffc107;
+      }
+
+      .result-item.error {
+        border-left-color: #dc3545;
+      }
+
+      .score-display {
+        display: flex;
+        align-items: center;
+        gap: 15px;
+        margin: 15px 0;
+      }
+
+      .score-circle {
+        width: 80px;
+        height: 80px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: white;
+        font-weight: bold;
+        font-size: 1.2rem;
+      }
+
+      .score-a {
+        background: #28a745;
+      }
+      .score-b {
+        background: #17a2b8;
+      }
+      .score-c {
+        background: #ffc107;
+        color: #333;
+      }
+      .score-d {
+        background: #fd7e14;
+      }
+      .score-f {
+        background: #dc3545;
+      }
+
+      .score-breakdown {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 15px;
+        margin-top: 20px;
+      }
+
+      .score-item {
+        background: white;
+        padding: 15px;
+        border-radius: 8px;
+        border-left: 4px solid #667eea;
+      }
+
+      .progress-bar {
+        width: 100%;
+        height: 8px;
+        background: #e0e0e0;
+        border-radius: 4px;
+        overflow: hidden;
+        margin: 10px 0;
+      }
+
+      .progress-fill {
+        height: 100%;
+        background: linear-gradient(45deg, #667eea, #764ba2);
+        transition: width 0.3s ease;
+      }
+
+      .issues-list {
+        margin-top: 20px;
+      }
+
+      .issue-item {
+        padding: 10px;
+        margin: 5px 0;
+        border-radius: 5px;
+        background: #fff3cd;
+        border-left: 3px solid #ffc107;
+      }
+
+      .issue-item.critical {
+        background: #f8d7da;
+        border-left-color: #dc3545;
+      }
+
+      .loading {
+        text-align: center;
+        padding: 40px;
+        color: #666;
+      }
+
+      .spinner {
+        border: 3px solid #f3f3f3;
+        border-top: 3px solid #667eea;
+        border-radius: 50%;
+        width: 40px;
+        height: 40px;
+        animation: spin 1s linear infinite;
+        margin: 0 auto 20px;
+      }
+
+      @keyframes spin {
+        0% {
+          transform: rotate(0deg);
+        }
+        100% {
+          transform: rotate(360deg);
+        }
+      }
+
+      .status-badge {
+        display: inline-block;
+        padding: 4px 12px;
+        border-radius: 20px;
+        font-size: 0.85rem;
+        font-weight: 600;
+        text-transform: uppercase;
+      }
+
+      .status-processing {
+        background: #fff3cd;
+        color: #856404;
+      }
+      .status-completed {
+        background: #d4edda;
+        color: #155724;
+      }
+      .status-failed {
+        background: #f8d7da;
+        color: #721c24;
+      }
+
+      @media (max-width: 768px) {
+        .dashboard {
+          grid-template-columns: 1fr;
+        }
+
+        .score-breakdown {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div class="header">
+        <h1>🎯 Dataset Validation Dashboard</h1>
+        <p>ETH Delhi 2025 - Comprehensive AI Agent Validation System</p>
+      </div>
+
+      <div class="dashboard">
+        <!-- Upload Section -->
+        <div class="card upload-section">
+          <h2>📊 Upload Dataset</h2>
+
+          <div class="upload-area" id="uploadArea">
+            <div>
+              <p style="font-size: 2rem; margin-bottom: 10px">📁</p>
+              <p><strong>Drop your dataset here</strong></p>
+              <p style="color: #666; margin-top: 10px">
+                or click to select files
+              </p>
+              <p style="color: #999; font-size: 0.9rem">
+                Supports CSV, JSON, Excel, Parquet
+              </p>
+            </div>
+          </div>
+
+          <input
+            type="file"
+            id="fileInput"
+            class="file-input"
+            accept=".csv,.json,.xlsx,.parquet"
+          />
+
+          <div class="demo-buttons">
+            <button class="btn btn-secondary" onclick="loadDemo('healthcare')">
+              🏥 Demo: Healthcare Data
+            </button>
+            <button class="btn btn-secondary" onclick="loadDemo('airquality')">
+              🌍 Demo: Air Quality Data
+            </button>
+          </div>
+        </div>
+
+        <!-- Results Section -->
+        <div class="card results-section">
+          <h2>📈 Validation Results</h2>
+          <div id="resultsContainer">
+            <div style="text-align: center; color: #666; padding: 40px">
+              <p style="font-size: 3rem; margin-bottom: 20px">🤖</p>
+              <p>
+                Upload a dataset or try a demo to see comprehensive validation
+                results
+              </p>
+              <p style="margin-top: 15px; font-size: 0.9rem">
+                Our AI agents will analyze data quality, legal compliance, and
+                provide actionable insights
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      const API_BASE = "http://localhost:8080";
+      let validationResults = {};
+
+      // File upload handling
+      const uploadArea = document.getElementById("uploadArea");
+      const fileInput = document.getElementById("fileInput");
+
+      uploadArea.addEventListener("click", () => fileInput.click());
+      uploadArea.addEventListener("dragover", (e) => {
+        e.preventDefault();
+        uploadArea.classList.add("dragover");
+      });
+      uploadArea.addEventListener("dragleave", () => {
+        uploadArea.classList.remove("dragover");
+      });
+      uploadArea.addEventListener("drop", (e) => {
+        e.preventDefault();
+        uploadArea.classList.remove("dragover");
+        const files = e.dataTransfer.files;
+        if (files.length > 0) {
+          handleFileUpload(files[0]);
+        }
+      });
+
+      fileInput.addEventListener("change", (e) => {
+        if (e.target.files.length > 0) {
+          handleFileUpload(e.target.files[0]);
+        }
+      });
+
+      async function handleFileUpload(file) {
+        const formData = new FormData();
+        formData.append("file", file);
+        formData.append("dataset_name", file.name);
+        formData.append("include_legal_analysis", "true");
+
+        try {
+          showLoading("Uploading and starting validation...");
+
+          const response = await fetch(`${API_BASE}/validate/upload`, {
+            method: "POST",
+            body: formData,
+          });
+
+          const result = await response.json();
+
+          if (response.ok) {
+            monitorValidation(result.request_id, result.dataset_name);
+          } else {
+            showError("Upload failed: " + result.detail);
+          }
+        } catch (error) {
+          showError("Upload error: " + error.message);
+        }
+      }
+
+      async function loadDemo(type) {
+        try {
+          showLoading(`Loading ${type} demo...`);
+
+          const response = await fetch(`${API_BASE}/validate/demo/${type}`, {
+            method: "GET",
+          });
+
+          const result = await response.json();
+
+          if (response.ok) {
+            monitorValidation(result.request_id, result.dataset_info);
+          } else {
+            showError("Demo load failed: " + result.detail);
+          }
+        } catch (error) {
+          showError("Demo error: " + error.message);
+        }
+      }
+
+      async function monitorValidation(requestId, datasetName) {
+        validationResults[requestId] = {
+          status: "processing",
+          dataset_name: datasetName,
+        };
+        updateResultsDisplay();
+
+        const maxAttempts = 60; // 5 minutes max
+        let attempts = 0;
+
+        const checkStatus = async () => {
+          try {
+            const response = await fetch(
+              `${API_BASE}/validate/status/${requestId}`
+            );
+            const status = await response.json();
+
+            if (status.status === "completed") {
+              // Get the final result
+              const resultResponse = await fetch(
+                `${API_BASE}/validate/result/${requestId}`
+              );
+              const result = await resultResponse.json();
+
+              validationResults[requestId] = {
+                ...result,
+                status: "completed",
+              };
+              updateResultsDisplay();
+              return;
+            } else if (status.status === "failed") {
+              validationResults[requestId].status = "failed";
+              validationResults[requestId].error = "Validation failed";
+              updateResultsDisplay();
+              return;
+            } else if (attempts < maxAttempts) {
+              attempts++;
+              setTimeout(checkStatus, 5000); // Check every 5 seconds
+            } else {
+              validationResults[requestId].status = "failed";
+              validationResults[requestId].error = "Timeout";
+              updateResultsDisplay();
+            }
+          } catch (error) {
+            console.error("Status check error:", error);
+            if (attempts < maxAttempts) {
+              attempts++;
+              setTimeout(checkStatus, 5000);
+            }
+          }
+        };
+
+        checkStatus();
+      }
+
+      function updateResultsDisplay() {
+        const container = document.getElementById("resultsContainer");
+
+        if (Object.keys(validationResults).length === 0) {
+          container.innerHTML = `
+                    <div style="text-align: center; color: #666; padding: 40px;">
+                        <p style="font-size: 3rem; margin-bottom: 20px;">🤖</p>
+                        <p>Upload a dataset or try a demo to see comprehensive validation results</p>
+                    </div>
+                `;
+          return;
+        }
+
+        container.innerHTML = "";
+
+        Object.entries(validationResults).forEach(([requestId, result]) => {
+          const resultDiv = document.createElement("div");
+          resultDiv.className = `result-item ${result.status}`;
+
+          if (result.status === "processing") {
+            resultDiv.innerHTML = `
+                        <div class="loading">
+                            <div class="spinner"></div>
+                            <h3>${result.dataset_name}</h3>
+                            <p>Running comprehensive validation...</p>
+                            <span class="status-badge status-processing">Processing</span>
+                        </div>
+                    `;
+          } else if (result.status === "completed" && result.success) {
+            const gradeClass = `score-${result.grade.toLowerCase()}`;
+            resultDiv.innerHTML = `
+                        <div style="display: flex; justify-content: between; align-items: center; margin-bottom: 15px;">
+                            <h3>${result.dataset_name}</h3>
+                            <span class="status-badge status-completed">Completed</span>
+                        </div>
+                        
+                        <div class="score-display">
+                            <div class="score-circle ${gradeClass}">
+                                ${result.overall_correctness_score}/100<br>
+                                Grade ${result.grade}
+                            </div>
+                            <div>
+                                <h4>Executive Summary</h4>
+                                <p>${result.executive_summary}</p>
+                                <p><strong>Processing Time:</strong> ${
+                                  result.processing_time_seconds
+                                }s</p>
+                            </div>
+                        </div>
+                        
+                        <div class="score-breakdown">
+                            <div class="score-item">
+                                <strong>Data Quality</strong>
+                                <div class="progress-bar">
+                                    <div class="progress-fill" style="width: ${
+                                      result.data_quality_score
+                                    }%"></div>
+                                </div>
+                                <span>${result.data_quality_score}/100</span>
+                            </div>
+                            <div class="score-item">
+                                <strong>Legal Compliance</strong>
+                                <div class="progress-bar">
+                                    <div class="progress-fill" style="width: ${
+                                      result.legal_compliance_score
+                                    }%"></div>
+                                </div>
+                                <span>${
+                                  result.legal_compliance_score
+                                }/100</span>
+                            </div>
+                        </div>
+                        
+                        ${
+                          result.critical_issues &&
+                          result.critical_issues.length > 0
+                            ? `
+                            <div class="issues-list">
+                                <h4>🚨 Critical Issues</h4>
+                                ${result.critical_issues
+                                  .slice(0, 3)
+                                  .map(
+                                    (issue) =>
+                                      `<div class="issue-item critical">${issue}</div>`
+                                  )
+                                  .join("")}
+                            </div>
+                        `
+                            : ""
+                        }
+                        
+                        ${
+                          result.recommendations &&
+                          result.recommendations.length > 0
+                            ? `
+                            <div class="issues-list">
+                                <h4>💡 Top Recommendations</h4>
+                                ${result.recommendations
+                                  .slice(0, 3)
+                                  .map(
+                                    (rec) =>
+                                      `<div class="issue-item">${rec}</div>`
+                                  )
+                                  .join("")}
+                            </div>
+                        `
+                            : ""
+                        }
+                    `;
+          } else {
+            resultDiv.innerHTML = `
+                        <div>
+                            <h3>${result.dataset_name}</h3>
+                            <span class="status-badge status-failed">Failed</span>
+                            <p style="color: #dc3545; margin-top: 10px;">
+                                ${result.error || "Validation failed"}
+                            </p>
+                        </div>
+                    `;
+          }
+
+          container.appendChild(resultDiv);
+        });
+      }
+
+      function showLoading(message) {
+        const container = document.getElementById("resultsContainer");
+        container.innerHTML = `
+                <div class="loading">
+                    <div class="spinner"></div>
+                    <p>${message}</p>
+                </div>
+            `;
+      }
+
+      function showError(message) {
+        const container = document.getElementById("resultsContainer");
+        container.innerHTML = `
+                <div style="text-align: center; color: #dc3545; padding: 40px;">
+                    <p style="font-size: 2rem;">⚠️</p>
+                    <p><strong>Error:</strong> ${message}</p>
+                </div>
+            `;
+      }
+
+      // Check API health on load
+      fetch(`${API_BASE}/health`)
+        .then((response) => response.json())
+        .then((data) => {
+          console.log("API Health:", data);
+        })
+        .catch((error) => {
+          console.error("API not available:", error);
+          showError(
+            "API server not available. Please ensure the validation API is running on localhost:8080"
+          );
+        });
+    </script>
+  </body>
+</html>

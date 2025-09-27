@@ -3287,16 +3287,16 @@ class ContextualScoringEngineTool(BaseTool):
             "general_purpose_score": {
                 "description": "Overall dataset quality for standard ML tasks",
                 "weights": {
-                    "completeness": 0.25,
-                    "consistency": 0.20,
-                    "balance": 0.20,
-                    "cleanliness": 0.15,
-                    "ml_readiness": 0.20
+                    "completeness": 0.30,      # Increased weight for completeness
+                    "consistency": 0.25,       # Increased weight for consistency  
+                    "balance": 0.15,           # Reduced weight for balance (not all datasets need perfect balance)
+                    "cleanliness": 0.15,       # Maintained
+                    "ml_readiness": 0.15       # Reduced but maintained
                 },
                 "penalties": {
-                    "high_missing": {"threshold": 10, "penalty": 20},
-                    "severe_imbalance": {"threshold": 20, "penalty": 15},
-                    "many_duplicates": {"threshold": 5, "penalty": 10}
+                    "high_missing": {"threshold": 20, "penalty": 15},      # More lenient threshold and penalty
+                    "severe_imbalance": {"threshold": 50, "penalty": 10},  # Much more lenient on imbalance
+                    "many_duplicates": {"threshold": 10, "penalty": 8}     # More lenient on duplicates
                 }
             },
             "anomaly_research_score": {
@@ -3493,22 +3493,20 @@ class ContextualScoringEngineTool(BaseTool):
         penalties = lens_config.get("penalties", {})
         bonuses = lens_config.get("bonuses", {})
         
-        base_score = 0.0
+        # Start with a baseline score of 60 for datasets that have basic structure
+        base_score = 60.0
         max_weight = sum(weights.values())
         
         explanation_parts = []
         
-        # Calculate weighted base score
+        # Calculate weighted additions to base score
         for metric_name, weight in weights.items():
             metric_value = self._get_metric_value(metrics, metric_name)
             if metric_value is not None:
-                contribution = (metric_value / 100) * weight * 100
+                # Convert metric to contribution (-20 to +20 range)
+                contribution = ((metric_value - 50) / 50) * weight * 20  
                 base_score += contribution
-                explanation_parts.append(f"{metric_name}: {metric_value:.1f} (weight: {weight:.2f})")
-        
-        # Normalize base score
-        if max_weight > 0:
-            base_score = (base_score / max_weight)
+                explanation_parts.append(f"{metric_name}: {metric_value:.1f} (contrib: {contribution:+.1f})")
         
         # Apply penalties
         for penalty_name, penalty_config in penalties.items():
@@ -3833,9 +3831,11 @@ class UtilityScoreSynthesizerTool(BaseTool):
         }
     
     def _synthesize_overall_score(self, data_integrity_score: float, highest_contextual_score: float) -> float:
-        """Apply the core synthesis formula"""
-        # Formula: Overall Utility Score = (Highest Contextual Score / 100) × Data Integrity Score
-        overall_score = (highest_contextual_score / 100) * data_integrity_score
+        """Apply the core synthesis formula with balanced weighting"""
+        # Improved formula that doesn't penalize general-purpose datasets too harshly:
+        # Overall Score = 0.7 × Data Integrity Score + 0.3 × Highest Contextual Score
+        # This ensures data integrity has the primary weight, with context as a bonus
+        overall_score = (0.7 * data_integrity_score) + (0.3 * highest_contextual_score)
         return max(0.0, min(100.0, overall_score))
     
     def _generate_executive_summary(self, overall_score: float, integrity_score: float, 

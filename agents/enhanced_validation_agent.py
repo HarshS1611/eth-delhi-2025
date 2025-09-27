@@ -21,11 +21,12 @@ from tools import tool_registry
 # Enhanced Message Models following uAgents patterns
 class DatasetAnalysisRequest(Model):
     """Comprehensive dataset analysis request"""
+    request_id: str
     dataset_path: str
     dataset_type: Optional[str] = None  # Auto-detect if not provided
     analysis_depth: str = "complete"  # "basic", "standard", "complete"
     custom_parameters: Optional[Dict[str, Any]] = {}
-    requester_id: str
+    requester_id: Optional[str] = None
     timestamp: str = datetime.now().isoformat()
 
 class DatasetAnalysisResult(Model):
@@ -252,7 +253,7 @@ class DatasetValidationAgent:
             # Step 5: Compile comprehensive result
             result = DatasetAnalysisResult(
                 success=True,
-                request_id=request.requester_id,
+                request_id=request.request_id or request.requester_id,
                 timestamp=datetime.now().isoformat(),
                 dataset_info=dataset_info,
                 integrity_scores=integrity_scores,
@@ -409,7 +410,7 @@ class DatasetValidationAgent:
         """Create an error result"""
         return DatasetAnalysisResult(
             success=False,
-            request_id=request.requester_id,
+            request_id=request.request_id or request.requester_id,
             timestamp=datetime.now().isoformat(),
             dataset_info={},
             integrity_scores={},

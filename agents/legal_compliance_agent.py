@@ -56,6 +56,7 @@ class LegalComplianceResult(Model):
     overall_risk_level: str
     legal_status: str
     requires_action: bool
+    overall_compliance_score: float = 50.0  # 0-100 score for overall compliance
     
     # Detailed results (truncated for message size)
     key_findings: List[str]
@@ -172,6 +173,7 @@ class LegalComplianceAgent:
                     overall_risk_level="Unknown",
                     legal_status="Analysis Failed",
                     requires_action=True,
+                    overall_compliance_score=0.0,  # Failed analysis gets 0 score
                     key_findings=[],
                     critical_recommendations=[f"Analysis failed: {str(e)}"],
                     error_message=str(e),
@@ -341,6 +343,11 @@ class LegalComplianceAgent:
             fingerprint_result, pii_result
         )
         
+        # Calculate overall compliance score (0-100)
+        compliance_score = self._calculate_compliance_score(
+            originality_score, pii_risk_score, overall_risk_level
+        )
+        
         return LegalComplianceResult(
             request_id=msg.request_id,
             success=True,
@@ -355,6 +362,7 @@ class LegalComplianceAgent:
             overall_risk_level=overall_risk_level,
             legal_status=legal_status,
             requires_action=requires_action,
+            overall_compliance_score=compliance_score,
             key_findings=key_findings[:10],  # Limit for message size
             critical_recommendations=critical_recommendations[:5],  # Limit for message size
             analysis_timestamp=datetime.now().isoformat()
@@ -420,6 +428,39 @@ class LegalComplianceAgent:
             legal_status = "Compliant"
         
         return overall_risk, legal_status, requires_action
+    
+    def _calculate_compliance_score(self, originality_score: Optional[float], 
+                                   pii_risk_score: Optional[float], 
+                                   overall_risk_level: str) -> float:
+        """Calculate overall compliance score (0-100)"""
+        
+        score = 100.0
+        
+        # Deduct based on originality
+        if originality_score is not None:
+            if originality_score < 60:
+                score -= 30  # Major deduction for low originality
+            elif originality_score < 80:
+                score -= 15  # Moderate deduction
+        
+        # Deduct based on PII risk
+        if pii_risk_score is not None:
+            if pii_risk_score > 70:
+                score -= 25  # High PII risk
+            elif pii_risk_score > 40:
+                score -= 15  # Medium PII risk
+            elif pii_risk_score > 20:
+                score -= 5   # Low PII risk
+        
+        # Deduct based on overall risk level
+        if overall_risk_level == "High":
+            score -= 20
+        elif overall_risk_level == "Medium":
+            score -= 10
+        elif overall_risk_level == "Low":
+            score -= 5
+        
+        return max(0.0, min(100.0, score))
     
     def run(self):
         """Run the legal compliance agent"""
