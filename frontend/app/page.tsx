@@ -1,12 +1,12 @@
-import { Header } from "@/components/home/header"
-import { HeroSection } from "@/components/home/hero-section"
-import { FeaturesSection } from "@/components/home/features-section"
-import { StatsSection } from "@/components/home/stats-section"
-import { CTASection } from "@/components/home/cta-section"
+import { Header } from "@/components/global/header"
+import { HeroSection } from "@/components/global/hero-section"
+import { FeaturesSection } from "@/components/global/features-section"
+import { StatsSection } from "@/components/global/stats-section"
+import { CTASection } from "@/components/global/cta-section"
 
 export default function HomePage() {
   return (
-    <div className="container mx-auto min-h-screen">
+    <div className="min-h-screen">
       <Header />
       <main>
         <HeroSection />
