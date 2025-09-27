@@ -25,9 +25,33 @@ jobs:
       - name: Setup SSH
         run: |
           mkdir -p ~/.ssh
+
+          # Write the private key
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/ethdelhisshkey
           chmod 600 ~/.ssh/ethdelhisshkey
+
+          # Add server to known hosts
           ssh-keyscan -H 81.15.150.171 >> ~/.ssh/known_hosts
+
+          # Test the key format
+          echo "Testing SSH key format..."
+          if ssh-keygen -l -f ~/.ssh/ethdelhisshkey; then
+            echo "✅ SSH key format is valid"
+          else
+            echo "❌ SSH key format is invalid"
+            echo "Key file size: $(wc -c < ~/.ssh/ethdelhisshkey)"
+            echo "Key starts with: $(head -1 ~/.ssh/ethdelhisshkey)"
+            exit 1
+          fi
+
+          # Test connection
+          echo "Testing SSH connection..."
+          if ssh -i ~/.ssh/ethdelhisshkey -o ConnectTimeout=10 -o StrictHostKeyChecking=no ubuntu@81.15.150.171 "echo 'SSH connection successful'"; then
+            echo "✅ SSH connection successful"
+          else
+            echo "❌ SSH connection failed"
+            exit 1
+          fi
 
       - name: Deploy Validation API to Fluence VM
         run: |
@@ -35,10 +59,17 @@ jobs:
           set -e
           echo "Starting ETH Delhi Validation API deployment..."
 
+          # Function to handle errors
+          handle_error() {
+            echo "❌ Error occurred in: $1"
+            echo "Exit code: $?"
+            exit 1
+          }
+
           # Step 1: System Setup
           echo "Step 1: System Setup"
-          sudo apt-get update -y
-          sudo apt-get install -y python3 python3-pip python3-venv curl wget
+          sudo apt-get update -y || handle_error "apt-get update"
+          sudo apt-get install -y python3 python3-pip python3-venv curl wget || handle_error "package installation"
 
           # Create backup if exists
           if [ -d ~/eth-delhi-api ]; then
@@ -65,7 +96,7 @@ jobs:
 
           # Step 3: Download Your Application Files
           echo "Step 3: Download Your Application Files"
-          wget -O validation_api.py https://raw.githubusercontent.com/HarshS1611/eth-delhi-2025/agents/agents/validation_api.py
+          wget -O validation_api.py https://raw.githubusercontent.com/HarshS1611/eth-delhi-2025/agents/agents/validation_api.py || handle_error "downloading validation_api.py"
           wget -O orchestrator_agent.py https://raw.githubusercontent.com/HarshS1611/eth-delhi-2025/agents/agents/orchestrator_agent.py
           wget -O enhanced_validation_agent.py https://raw.githubusercontent.com/HarshS1611/eth-delhi-2025/agents/agents/enhanced_validation_agent.py
           wget -O legal_compliance_agent.py https://raw.githubusercontent.com/HarshS1611/eth-delhi-2025/agents/agents/legal_compliance_agent.py
