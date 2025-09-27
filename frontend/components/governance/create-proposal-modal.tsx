@@ -180,7 +180,7 @@ export function CreateProposalModal({ isOpen, onClose, onSubmit }: CreateProposa
           </div>
 
           <div className="flex justify-end space-x-3">
-            <Button type="button" variant="outline" onClick={onClose} disabled={isSubmitting}>
+            <Button type="Button" variant="outline" onClick={onClose} disabled={isSubmitting}>
               Cancel
             </Button>
             <Button

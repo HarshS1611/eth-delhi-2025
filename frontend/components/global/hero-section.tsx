@@ -1,5 +1,5 @@
-import { Button } from "@/components/ui/button"
 import { ArrowRight, Database, Coins, Shield } from "lucide-react"
+import { Button } from "../ui/button"
 
 export function HeroSection() {
   return (
