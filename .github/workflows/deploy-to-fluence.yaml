@@ -24,7 +24,7 @@ jobs:
 
       - name: Deploy Validation API to Fluence VM
         run: |
-          ssh -i ~/.ssh/ethdelhisshkey -o StrictHostKeyChecking=no ubuntu@81.15.150.161 << 'ENDSSH'
+          ssh -i ~/.ssh/ethdelhisshkey -o StrictHostKeyChecking=no ubuntu@81.15.150.171 << 'ENDSSH'
           set -e
           echo "Starting ETH Delhi Validation API deployment..."
 
