@@ -111,7 +111,7 @@ export function DatasetCard({ dataset, onLicense }: DatasetCardProps) {
 
         <div className="flex items-center justify-between">
           <div className="flex items-center space-x-1">
-            <Coins className="h-4 w-4 text-accent" />
+            <Coins className="h-4 w-4 text-primary" />
             <span className="font-semibold text-lg">{dataset.price} LSDC</span>
           </div>
           <Button

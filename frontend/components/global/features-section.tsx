@@ -16,7 +16,7 @@ const features = [
     title: "Seamless Upload",
     description: "Simple drag-and-drop interface for JSON, CSV, and XML files with automatic metadata extraction.",
     badge: "User-Friendly",
-    color: "text-accent",
+    color: "text-primary",
   },
   {
     icon: Coins,
@@ -58,7 +58,7 @@ const features = [
     title: "Open Marketplace",
     description: "Global access to high quality datasets with transparent pricing and contributor rewards.",
     badge: "Global",
-    color: "text-accent",
+    color: "text-primary",
   },
   {
     icon: Lock,

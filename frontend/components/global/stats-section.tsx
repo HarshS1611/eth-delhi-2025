@@ -14,7 +14,7 @@ const stats = [
     value: "1,234",
     label: "Active Contributors",
     change: "+8% this month",
-    color: "text-accent",
+    color: "text-primary",
   },
   {
     icon: DollarSign,

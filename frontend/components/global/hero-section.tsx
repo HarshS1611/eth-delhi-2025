@@ -64,7 +64,7 @@ export function HeroSection() {
 
             <div className="flex flex-col items-center">
               <div className="mb-4 rounded-full bg-accent/10 p-3">
-                <Coins className="h-6 w-6 text-accent" />
+                <Coins className="h-6 w-6 text-primary" />
               </div>
               <h3 className="mb-2 font-semibold">Dual Token Economy</h3>
               <p className="text-sm text-muted-foreground text-center">

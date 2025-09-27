@@ -352,7 +352,7 @@ export function UploadFlow() {
                         <div className="text-sm text-muted-foreground">Overall Quality</div>
                       </div>
                       <div className="text-center">
-                        <div className="text-2xl font-bold text-accent">{aiAnalysis.completeness}%</div>
+                        <div className="text-2xl font-bold text-primary">{aiAnalysis.completeness}%</div>
                         <div className="text-sm text-muted-foreground">Completeness</div>
                       </div>
                       <div className="text-center">
@@ -380,13 +380,13 @@ export function UploadFlow() {
                     <div className="flex items-center justify-between">
                       <div>
                         <h3 className="text-lg font-semibold flex items-center space-x-2">
-                          <Coins className="h-5 w-5 text-accent" />
+                          <Coins className="h-5 w-5 text-primary" />
                           <span>Suggested Price</span>
                         </h3>
                         <p className="text-sm text-muted-foreground">Based on quality and market analysis</p>
                       </div>
                       <div className="text-right">
-                        <div className="text-2xl font-bold text-accent">{aiAnalysis.suggestedPrice} LSDC</div>
+                        <div className="text-2xl font-bold text-primary">{aiAnalysis.suggestedPrice} LSDC</div>
                         <div className="text-sm text-muted-foreground">per license</div>
                       </div>
                     </div>

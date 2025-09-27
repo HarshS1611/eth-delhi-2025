@@ -86,7 +86,7 @@ export function PaymentModal({ dataset, isOpen, onClose }: PaymentModalProps) {
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle className="flex items-center space-x-2">
-            <Coins className="h-5 w-5 text-accent" />
+            <Coins className="h-5 w-5 text-primary" />
             <span>License Dataset</span>
           </DialogTitle>
           <DialogDescription>

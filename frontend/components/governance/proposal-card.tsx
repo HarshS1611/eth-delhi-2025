@@ -37,7 +37,7 @@ interface ProposalCardProps {
 
 const categoryConfig = {
   platform: { label: "Platform", color: "bg-primary/10 text-primary" },
-  treasury: { label: "Treasury", color: "bg-accent/10 text-accent" },
+  treasury: { label: "Treasury", color: "bg-accent/10 text-primary" },
   technical: { label: "Technical", color: "bg-chart-2/10 text-chart-2" },
   governance: { label: "Governance", color: "bg-chart-3/10 text-chart-3" },
 }
