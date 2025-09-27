@@ -1,0 +1,509 @@
+#!/usr/bin/env python3
+"""
+Enhanced Dataset Validation Agent with Complete Analysis Pipeline
+ETH Delhi 2025 - Fetch.ai uAgents Integration
+"""
+
+from uagents import Agent, Context, Model, Bureau
+from uagents.setup import fund_agent_if_low
+from typing import Dict, List, Any, Optional
+import json
+import pandas as pd
+import numpy as np
+from pathlib import Path
+import asyncio
+import logging
+from datetime import datetime
+
+# Import our comprehensive tool registry
+from tools import tool_registry
+
+# Enhanced Message Models following uAgents patterns
+class DatasetAnalysisRequest(Model):
+    """Comprehensive dataset analysis request"""
+    dataset_path: str
+    dataset_type: Optional[str] = None  # Auto-detect if not provided
+    analysis_depth: str = "complete"  # "basic", "standard", "complete"
+    custom_parameters: Optional[Dict[str, Any]] = {}
+    requester_id: str
+    timestamp: str = datetime.now().isoformat()
+
+class DatasetAnalysisResult(Model):
+    """Complete dataset analysis result with all scoring"""
+    success: bool
+    request_id: str
+    timestamp: str
+    
+    # Basic dataset info
+    dataset_info: Dict[str, Any]
+    
+    # Individual tool scores (0-100)
+    integrity_scores: Dict[str, float]
+    statistical_scores: Dict[str, float] 
+    ml_usability_scores: Dict[str, float]
+    
+    # High-level analysis results
+    persona_tags: List[str]
+    primary_persona: str
+    contextual_scores: Dict[str, float]
+    
+    # Final synthesis
+    overall_utility_score: float
+    utility_grade: Dict[str, Any]
+    data_integrity_score: float
+    executive_summary: str
+    
+    # Actionable insights
+    recommendations: List[str]
+    publication_readiness: Dict[str, Any]
+    next_steps: List[str]
+    
+    # Error handling
+    errors: List[str] = []
+    warnings: List[str] = []
+
+class AgentStatusRequest(Model):
+    """Request for agent status and capabilities"""
+    requester_id: str
+
+class AgentStatusResponse(Model):
+    """Agent status and capabilities response"""
+    agent_name: str
+    agent_address: str
+    status: str
+    available_tools: Dict[str, str]
+    analysis_modes: List[str]
+    uptime: str
+    processed_requests: int
+
+class DatasetValidationAgent:
+    """Enhanced Dataset Validation Agent with complete analysis pipeline"""
+    
+    def __init__(self, name: str = "dataset_validator", port: int = 8000):
+        self.agent = Agent(
+            name=name,
+            port=port,
+            seed="eth_delhi_2025_dataset_validation_agent",
+            endpoint=[f"http://localhost:{port}/submit"],
+        )
+        
+        # Agent state
+        self.processed_requests = 0
+        self.start_time = datetime.now()
+        
+        # Fund agent for testnet operations (following uAgents guidelines)
+        fund_agent_if_low(self.agent.wallet.address())
+        
+        self._setup_handlers()
+        
+        # Setup logging
+        logging.basicConfig(level=logging.INFO)
+        self.logger = logging.getLogger(f"agent.{name}")
+    
+    def _setup_handlers(self):
+        """Setup all agent event handlers following uAgents patterns"""
+        
+        @self.agent.on_event("startup")
+        async def startup_handler(ctx: Context):
+            ctx.logger.info("🚀 Enhanced Dataset Validation Agent started!")
+            ctx.logger.info(f"Agent name: {ctx.name}")
+            ctx.logger.info(f"Agent address: {ctx.address}")
+            ctx.logger.info(f"Wallet address: {self.agent.wallet.address()}")
+            ctx.logger.info(f"Total analysis tools available: {len(tool_registry.tools)}")
+            
+            # Log available tool categories
+            tools_by_category = self._categorize_tools()
+            for category, tools in tools_by_category.items():
+                ctx.logger.info(f"  {category}: {len(tools)} tools")
+            
+            ctx.logger.info("✅ Ready for dataset analysis requests!")
+        
+        @self.agent.on_message(model=DatasetAnalysisRequest)
+        async def handle_analysis_request(ctx: Context, sender: str, msg: DatasetAnalysisRequest):
+            """Handle comprehensive dataset analysis requests"""
+            ctx.logger.info(f"📥 Received analysis request from {sender}")
+            ctx.logger.info(f"Dataset: {msg.dataset_path}")
+            ctx.logger.info(f"Analysis depth: {msg.analysis_depth}")
+            
+            try:
+                # Perform complete analysis pipeline
+                result = await self._perform_complete_analysis(msg, ctx)
+                
+                # Update processed requests counter
+                self.processed_requests += 1
+                
+                # Log summary
+                if result.success:
+                    ctx.logger.info(f"✅ Analysis completed successfully")
+                    ctx.logger.info(f"Overall Utility Score: {result.overall_utility_score:.1f}/100")
+                    ctx.logger.info(f"Primary Persona: {result.primary_persona}")
+                    ctx.logger.info(f"Utility Grade: {result.utility_grade['grade']}")
+                else:
+                    ctx.logger.error(f"❌ Analysis failed: {len(result.errors)} errors")
+                
+                # Send result back to requester
+                await ctx.send(sender, result)
+                
+            except Exception as e:
+                ctx.logger.error(f"❌ Analysis pipeline failed: {e}")
+                
+                # Send error result
+                error_result = DatasetAnalysisResult(
+                    success=False,
+                    request_id=msg.requester_id,
+                    timestamp=datetime.now().isoformat(),
+                    dataset_info={},
+                    integrity_scores={},
+                    statistical_scores={},
+                    ml_usability_scores={},
+                    persona_tags=[],
+                    primary_persona="#Unknown",
+                    contextual_scores={},
+                    overall_utility_score=0.0,
+                    utility_grade={"grade": "F", "description": "Failed"},
+                    data_integrity_score=0.0,
+                    executive_summary=f"Analysis failed: {str(e)}",
+                    recommendations=[],
+                    publication_readiness={"status": "failed"},
+                    next_steps=[],
+                    errors=[str(e)]
+                )
+                
+                await ctx.send(sender, error_result)
+        
+        @self.agent.on_message(model=AgentStatusRequest)
+        async def handle_status_request(ctx: Context, sender: str, msg: AgentStatusRequest):
+            """Handle agent status requests"""
+            ctx.logger.info(f"📊 Status request from {sender}")
+            
+            uptime = datetime.now() - self.start_time
+            
+            response = AgentStatusResponse(
+                agent_name=ctx.name,
+                agent_address=ctx.address,
+                status="active",
+                available_tools=tool_registry.list_tools(),
+                analysis_modes=["basic", "standard", "complete"],
+                uptime=str(uptime),
+                processed_requests=self.processed_requests
+            )
+            
+            await ctx.send(sender, response)
+            ctx.logger.info(f"📤 Status sent to {sender}")
+    
+    async def _perform_complete_analysis(self, request: DatasetAnalysisRequest, ctx: Context) -> DatasetAnalysisResult:
+        """Perform complete dataset analysis using all available tools"""
+        
+        try:
+            # Step 1: Load dataset
+            ctx.logger.info("📊 Step 1: Loading dataset...")
+            load_result = await tool_registry.execute_tool(
+                "data_loader",
+                file_path=request.dataset_path,
+                format_type=request.dataset_type
+            )
+            
+            if not load_result["success"]:
+                return self._create_error_result(request, [load_result["error"]], "Dataset loading failed")
+            
+            df = load_result["data"]
+            dataset_info = load_result["metadata"]
+            ctx.logger.info(f"✅ Dataset loaded: {df.shape[0]} rows, {df.shape[1]} columns")
+            
+            # Step 2: Run foundational analysis tools
+            ctx.logger.info("🔍 Step 2: Running foundational analysis...")
+            analysis_results = await self._run_foundational_analysis(df, ctx)
+            
+            # Check for critical failures
+            failed_tools = [name for name, result in analysis_results.items() if not result.get("success", False)]
+            if len(failed_tools) > len(analysis_results) // 2:
+                return self._create_error_result(
+                    request, 
+                    [f"Too many analysis tools failed: {failed_tools}"],
+                    "Critical analysis failure"
+                )
+            
+            # Step 3: Extract scores from foundational tools
+            ctx.logger.info("📊 Step 3: Extracting scores...")
+            integrity_scores = self._extract_integrity_scores(analysis_results)
+            statistical_scores = self._extract_statistical_scores(analysis_results)
+            ml_usability_scores = self._extract_ml_scores(analysis_results)
+            
+            # Step 4: Run high-level analysis
+            ctx.logger.info("🎯 Step 4: Running high-level analysis...")
+            
+            # Persona tagging
+            persona_result = await tool_registry.execute_tool("dataset_persona_tagger", analysis_results=analysis_results)
+            persona_tags = persona_result.get("persona_tags", []) if persona_result["success"] else []
+            primary_persona = persona_result.get("primary_persona", "#Unknown") if persona_result["success"] else "#Unknown"
+            
+            # Contextual scoring
+            scoring_result = await tool_registry.execute_tool("contextual_scoring_engine", analysis_results=analysis_results, persona_tags=persona_tags)
+            contextual_scores = scoring_result.get("contextual_scores", {}) if scoring_result["success"] else {}
+            
+            # Final synthesis
+            synthesis_result = await tool_registry.execute_tool("utility_score_synthesizer", analysis_results=analysis_results, persona_tags=persona_tags, contextual_scores=contextual_scores)
+            
+            if not synthesis_result["success"]:
+                return self._create_error_result(request, [synthesis_result["error"]], "Final synthesis failed")
+            
+            ctx.logger.info("✅ Step 4: High-level analysis completed")
+            
+            # Step 5: Compile comprehensive result
+            result = DatasetAnalysisResult(
+                success=True,
+                request_id=request.requester_id,
+                timestamp=datetime.now().isoformat(),
+                dataset_info=dataset_info,
+                integrity_scores=integrity_scores,
+                statistical_scores=statistical_scores,
+                ml_usability_scores=ml_usability_scores,
+                persona_tags=persona_tags,
+                primary_persona=primary_persona,
+                contextual_scores=contextual_scores,
+                overall_utility_score=synthesis_result["overall_utility_score"],
+                utility_grade=synthesis_result["utility_grade"],
+                data_integrity_score=synthesis_result["data_integrity_score"],
+                executive_summary=synthesis_result["executive_summary"],
+                recommendations=synthesis_result["recommendations"],
+                publication_readiness=synthesis_result["publication_readiness"],
+                next_steps=synthesis_result["next_steps"]
+            )
+            
+            # Collect any warnings from tools
+            warnings = []
+            for tool_result in analysis_results.values():
+                if "warnings" in tool_result:
+                    warnings.extend(tool_result["warnings"])
+            result.warnings = warnings
+            
+            return result
+            
+        except Exception as e:
+            ctx.logger.error(f"Analysis pipeline error: {e}")
+            return self._create_error_result(request, [str(e)], "Pipeline execution failed")
+    
+    async def _run_foundational_analysis(self, df: pd.DataFrame, ctx: Context) -> Dict[str, Any]:
+        """Run all foundational analysis tools"""
+        analysis_results = {}
+        
+        # Core analysis tools
+        tools_to_run = [
+            ("data_profiler", {"data": df}),
+            ("missing_value_analyzer", {"data": df}),
+            ("duplicate_record_detector", {"data": df}),
+            ("data_type_consistency_checker", {"data": df}),
+            ("outlier_detection_engine", {"data": df}),
+            ("feature_correlation_mapper", {"data": df}),
+        ]
+        
+        # Add ML tools if target column can be inferred
+        numeric_cols = df.select_dtypes(include=[np.number]).columns
+        categorical_cols = df.select_dtypes(include=['object', 'category']).columns
+        
+        # Try to identify potential target column
+        target_column = None
+        potential_targets = ['target', 'label', 'class', 'y', 'outcome', 'result']
+        for col in df.columns:
+            if col.lower() in potential_targets:
+                target_column = col
+                break
+        
+        # If no obvious target, use last column if it looks like a target
+        if target_column is None and len(df.columns) > 1:
+            last_col = df.columns[-1]
+            if df[last_col].nunique() <= 20:  # Looks like a classification target
+                target_column = last_col
+        
+        if target_column is not None:
+            ctx.logger.info(f"Using '{target_column}' as target column for ML analysis")
+            tools_to_run.extend([
+                ("class_balance_assessor", {"data": df, "target_column": target_column}),
+                ("baseline_model_performance", {"data": df, "target_column": target_column}),
+                ("feature_importance_analyzer", {"data": df, "target_column": target_column}),
+                ("data_separability_scorer", {"data": df, "target_column": target_column}),
+            ])
+        
+        # Execute tools
+        for tool_name, params in tools_to_run:
+            try:
+                ctx.logger.info(f"  Running {tool_name}...")
+                result = await tool_registry.execute_tool(tool_name, **params)
+                analysis_results[f"{tool_name}_analysis"] = result
+                
+                if result["success"]:
+                    ctx.logger.info(f"  ✅ {tool_name} completed")
+                else:
+                    ctx.logger.warning(f"  ⚠️ {tool_name} failed: {result.get('error', 'Unknown error')}")
+                    
+            except Exception as e:
+                ctx.logger.error(f"  ❌ {tool_name} error: {e}")
+                analysis_results[f"{tool_name}_analysis"] = {"success": False, "error": str(e)}
+        
+        return analysis_results
+    
+    def _extract_integrity_scores(self, analysis_results: Dict) -> Dict[str, float]:
+        """Extract integrity-related scores"""
+        scores = {}
+        
+        if "missing_value_analyzer_analysis" in analysis_results:
+            result = analysis_results["missing_value_analyzer_analysis"]
+            if result["success"]:
+                scores["completeness"] = result.get("integrity_score", 0)
+        
+        if "duplicate_record_detector_analysis" in analysis_results:
+            result = analysis_results["duplicate_record_detector_analysis"]
+            if result["success"]:
+                scores["duplicates"] = result.get("integrity_score", 0)
+        
+        if "data_type_consistency_checker_analysis" in analysis_results:
+            result = analysis_results["data_type_consistency_checker_analysis"]
+            if result["success"]:
+                scores["consistency"] = result.get("consistency_score", 0)
+        
+        return scores
+    
+    def _extract_statistical_scores(self, analysis_results: Dict) -> Dict[str, float]:
+        """Extract statistical analysis scores"""
+        scores = {}
+        
+        if "outlier_detection_engine_analysis" in analysis_results:
+            result = analysis_results["outlier_detection_engine_analysis"]
+            if result["success"]:
+                scores["outliers"] = result.get("outlier_score", 0)
+        
+        if "class_balance_assessor_analysis" in analysis_results:
+            result = analysis_results["class_balance_assessor_analysis"]
+            if result["success"]:
+                scores["class_balance"] = result.get("balance_score", 0)
+        
+        if "feature_correlation_mapper_analysis" in analysis_results:
+            result = analysis_results["feature_correlation_mapper_analysis"]
+            if result["success"]:
+                scores["correlations"] = result.get("multicollinearity_score", 0)
+        
+        return scores
+    
+    def _extract_ml_scores(self, analysis_results: Dict) -> Dict[str, float]:
+        """Extract ML usability scores"""
+        scores = {}
+        
+        if "baseline_model_performance_analysis" in analysis_results:
+            result = analysis_results["baseline_model_performance_analysis"]
+            if result["success"]:
+                scores["ml_performance"] = result.get("ml_usability_score", 0)
+        
+        if "feature_importance_analyzer_analysis" in analysis_results:
+            result = analysis_results["feature_importance_analyzer_analysis"]
+            if result["success"]:
+                scores["feature_importance"] = result.get("information_score", 0)
+        
+        if "data_separability_scorer_analysis" in analysis_results:
+            result = analysis_results["data_separability_scorer_analysis"]
+            if result["success"]:
+                scores["separability"] = result.get("separability_score", 0)
+        
+        return scores
+    
+    def _create_error_result(self, request: DatasetAnalysisRequest, errors: List[str], summary: str) -> DatasetAnalysisResult:
+        """Create an error result"""
+        return DatasetAnalysisResult(
+            success=False,
+            request_id=request.requester_id,
+            timestamp=datetime.now().isoformat(),
+            dataset_info={},
+            integrity_scores={},
+            statistical_scores={},
+            ml_usability_scores={},
+            persona_tags=[],
+            primary_persona="#Unknown",
+            contextual_scores={},
+            overall_utility_score=0.0,
+            utility_grade={"grade": "F", "description": "Failed"},
+            data_integrity_score=0.0,
+            executive_summary=summary,
+            recommendations=[],
+            publication_readiness={"status": "failed"},
+            next_steps=[],
+            errors=errors
+        )
+    
+    def _categorize_tools(self) -> Dict[str, List[str]]:
+        """Categorize available tools for status reporting"""
+        all_tools = tool_registry.list_tools()
+        
+        categories = {
+            "Core Processing": [],
+            "Data Integrity": [],
+            "Statistical Analysis": [],
+            "ML Usability": [],
+            "High-Level Analysis": []
+        }
+        
+        for tool_name in all_tools.keys():
+            if tool_name in ["data_loader", "data_profiler", "validation_rules", "report_generator"]:
+                categories["Core Processing"].append(tool_name)
+            elif tool_name in ["missing_value_analyzer", "duplicate_record_detector", "data_type_consistency_checker"]:
+                categories["Data Integrity"].append(tool_name)
+            elif tool_name in ["outlier_detection_engine", "class_balance_assessor", "feature_correlation_mapper"]:
+                categories["Statistical Analysis"].append(tool_name)
+            elif tool_name in ["baseline_model_performance", "feature_importance_analyzer", "data_separability_scorer"]:
+                categories["ML Usability"].append(tool_name)
+            elif tool_name in ["dataset_persona_tagger", "contextual_scoring_engine", "utility_score_synthesizer"]:
+                categories["High-Level Analysis"].append(tool_name)
+        
+        return categories
+
+# Bureau setup for multi-agent coordination (following uAgents guidelines)
+def create_validation_bureau():
+    """Create a bureau with multiple validation agents for distributed processing"""
+    bureau = Bureau()
+    
+    # Primary validation agent
+    primary_agent = DatasetValidationAgent("primary_validator", 8000)
+    bureau.add(primary_agent.agent)
+    
+    # Secondary agent for load balancing (if needed)
+    # secondary_agent = DatasetValidationAgent("secondary_validator", 8001)
+    # bureau.add(secondary_agent.agent)
+    
+    return bureau
+
+# Example client code for testing
+async def test_validation_agent():
+    """Test the validation agent with a sample request"""
+    print("🧪 Testing Enhanced Dataset Validation Agent")
+    print("=" * 50)
+    
+    # Create a test request
+    request = DatasetAnalysisRequest(
+        dataset_path="sample_dataset.csv",
+        dataset_type="csv",
+        analysis_depth="complete",
+        requester_id="test_client_001"
+    )
+    
+    print(f"📝 Test request created:")
+    print(f"  Dataset: {request.dataset_path}")
+    print(f"  Analysis depth: {request.analysis_depth}")
+    print(f"  Requester: {request.requester_id}")
+    
+    # Note: In actual usage, this would be sent via the uAgents network
+    # For testing, we would need to set up a client agent to send the message
+
+if __name__ == "__main__":
+    import sys
+    
+    if len(sys.argv) > 1 and sys.argv[1] == "bureau":
+        # Run as bureau (multiple agents)
+        print("🏢 Starting Dataset Validation Bureau")
+        validation_bureau = create_validation_bureau()
+        validation_bureau.run()
+    elif len(sys.argv) > 1 and sys.argv[1] == "test":
+        # Run test
+        asyncio.run(test_validation_agent())
+    else:
+        # Run single agent
+        print("🤖 Starting Single Dataset Validation Agent")
+        validator = DatasetValidationAgent()
+        validator.agent.run()
