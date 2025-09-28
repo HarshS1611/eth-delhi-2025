@@ -7,30 +7,33 @@ import { PaymentModal } from "@/components/marketplace/payment-modal"
 import { MarketplaceFilters, type FilterState } from "@/components/marketplace/marketplace-filters"
 import { fetchLighthouseCards } from "@/lib/marketplace"
 import { useDatasets } from "@/lib/dao"
+import { usePurchasedDatasetIds } from "@/lib/license"
 
 export default function MarketplacePage() {
   const [selected, setSelected] = useState<Dataset | null>(null)
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false)
   const [filters, setFilters] = useState<FilterState>({ search: "", category: "All", sortBy: "relevance" })
+  const { ids: purchased } = usePurchasedDatasetIds()
 
+  console.log(purchased)
   // Lighthouse
   const [lhCards, setLhCards] = useState<Dataset[]>([])
   const [lhLoading, setLhLoading] = useState(false)
   const [lhError, setLhError] = useState<string | null>(null)
   useEffect(() => {
     let cancel = false
-    ;(async () => {
-      setLhLoading(true)
-      setLhError(null)
-      try {
-        const cards = await fetchLighthouseCards()
-        if (!cancel) setLhCards(cards)
-      } catch (e: any) {
-        if (!cancel) setLhError(String(e?.message || e))
-      } finally {
-        if (!cancel) setLhLoading(false)
-      }
-    })()
+      ; (async () => {
+        setLhLoading(true)
+        setLhError(null)
+        try {
+          const cards = await fetchLighthouseCards()
+          if (!cancel) setLhCards(cards)
+        } catch (e: any) {
+          if (!cancel) setLhError(String(e?.message || e))
+        } finally {
+          if (!cancel) setLhLoading(false)
+        }
+      })()
     return () => { cancel = true }
   }, [])
 
@@ -81,6 +84,8 @@ export default function MarketplacePage() {
     return sorted
   }, [lhCards, onchainCards, filters])
 
+
+
   const handleLicense = (d: Dataset) => {
     setSelected(d)
     setIsPaymentModalOpen(true)
@@ -111,9 +116,19 @@ export default function MarketplacePage() {
             )}
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {allCards.map((d, idx) => (
-                <DatasetCard key={`${d.source}-${d.cid || d.id || idx}`} dataset={d} onLicense={handleLicense} />
-              ))}
+              {allCards.map((d, idx) => {
+                // mark owned only for on-chain datasets that have a numeric id
+                const idNum = d?.id != null ? Number(d.id) : NaN
+                return (
+                  <DatasetCard
+                    key={`${d.source}-${d.cid || d.id || idx}`}
+                    dataset={d}
+                    onLicense={handleLicense}
+                    isPurchased={d.source === "onchain" && d.id != null && purchased.has(Number(d.id))}
+
+                  />
+                )
+              })}
             </div>
 
             {allCards.length === 0 && !(lhLoading || chainLoading) && (

@@ -27,11 +27,12 @@ export interface Dataset {
 export function DatasetCard({
   dataset,
   onLicense,
+  isPurchased
 }: {
   dataset: Dataset
   onLicense: (d: Dataset) => void
+  isPurchased?: boolean
 }) {
-  console.log(dataset)
   const title = dataset.title || dataset.cid || "Untitled dataset"
   const desc =
     dataset.description ||
@@ -64,6 +65,11 @@ export function DatasetCard({
             <Badge variant={qualityBadge.variant} className="text-xs">{qualityBadge.label}</Badge>
             <div className={`text-sm font-medium ${getQualityColor(qs)}`}>{qs}% Quality</div>
           </div> */}
+           {isPurchased && (
+            <Badge className="ml-2 bg-green-200" variant="secondary">
+              Purchased
+            </Badge>
+          )}
         </div>
         <div className="flex flex-wrap gap-1 mb-3">
           <Badge variant="outline" className="text-xs">{category}</Badge>
