@@ -3,9 +3,11 @@
 import Link from "next/link"
 import { useEffect, useState } from "react"
 import { Button } from "@/components/ui/button"
-import { appKit } from "@/lib/wallet" 
+import { appKit } from "@/lib/wallet"
+import { useAccount } from "wagmi"
 
 export function Header() {
+  const { isConnected, address } = useAccount()
   const [mounted, setMounted] = useState(false)
   useEffect(() => setMounted(true), [])
 
@@ -24,12 +26,14 @@ export function Header() {
 
         {/* Render connect button only after mount to avoid SSR mismatch */}
         <div>
-          {mounted ? (
+          { isConnected ? (
+            <Button onClick={openConnect} size="sm" className="bg-primary text-primary-foreground">
+               {address}
+            </Button>
+          ) : (
             <Button onClick={openConnect} size="sm" className="bg-primary text-primary-foreground">
               Connect Wallet
             </Button>
-          ) : (
-            <div className="h-9 w-[130px] rounded-md bg-muted" aria-hidden />
           )}
         </div>
       </div>
