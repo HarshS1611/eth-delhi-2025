@@ -110,28 +110,59 @@ class ASIOneAnalyzer:
     
     def _extract_dataset_dimensions(self, tool_results: Dict[str, Any]) -> Dict[str, Any]:
         """Extract actual dataset dimensions from validation results"""
-        dimensions = {"rows": None, "columns": None, "cells": None}
+        dimensions = {"rows": None, "columns": None, "cells": None, "numeric_columns": None}
         
-        # Get total cells from integrity results
-        integrity_results = tool_results.get("validation_tool_results", {}).get("integrity_tools", {})
-        missing_analysis = integrity_results.get("missing_value_analyzer", {}).get("analysis", {})
-        overall_stats = missing_analysis.get("overall_stats", {})
-        dimensions["cells"] = overall_stats.get("total_cells")
+        try:
+            # From the debug output, we can directly extract from the known structure
+            validation_results = tool_results.get("validation_tool_results", {})
+            
+            # Get basic info from data_profiler if available
+            analysis_results = validation_results.get("analysis_results", {})
+            if isinstance(analysis_results, dict):
+                data_profiler = analysis_results.get("data_profiler", {})
+                if isinstance(data_profiler, dict):
+                    profile = data_profiler.get("profile", {})
+                    if isinstance(profile, dict):
+                        basic_info = profile.get("basic_info", {})
+                        if isinstance(basic_info, dict):
+                            dimensions["rows"] = basic_info.get("total_rows")
+                            dimensions["columns"] = basic_info.get("total_columns")
+                            if dimensions["rows"] and dimensions["columns"]:
+                                dimensions["cells"] = dimensions["rows"] * dimensions["columns"]
+            
+            # Get numeric columns from outlier analysis
+            outlier_analysis = validation_results.get("outlier_detection_engine_analysis", {})
+            if isinstance(outlier_analysis, dict):
+                analysis = outlier_analysis.get("analysis", {})
+                if isinstance(analysis, dict):
+                    overall_stats = analysis.get("overall_stats", {})
+                    if isinstance(overall_stats, dict):
+                        dimensions["numeric_columns"] = overall_stats.get("total_numeric_columns")
+            
+            # Fallback: try the old structure too
+            if not dimensions["rows"]:
+                missing_analysis = validation_results.get("missing_value_analyzer_analysis", {})
+                if isinstance(missing_analysis, dict):
+                    analysis = missing_analysis.get("analysis", {})
+                    if isinstance(analysis, dict):
+                        overall_stats = analysis.get("overall_stats", {})
+                        if isinstance(overall_stats, dict):
+                            dimensions["cells"] = overall_stats.get("total_cells")
+                
+                duplicate_analysis = validation_results.get("duplicate_record_detector_analysis", {})
+                if isinstance(duplicate_analysis, dict):
+                    analysis = duplicate_analysis.get("analysis", {})
+                    if isinstance(analysis, dict):
+                        overall_stats = analysis.get("overall_stats", {})
+                        if isinstance(overall_stats, dict):
+                            dimensions["rows"] = overall_stats.get("total_rows")
+                
+                if dimensions["cells"] and dimensions["rows"] and dimensions["rows"] > 0:
+                    dimensions["columns"] = dimensions["cells"] // dimensions["rows"]
         
-        # Get total rows from duplicate results
-        duplicate_analysis = integrity_results.get("duplicate_record_detector", {}).get("analysis", {})
-        duplicate_stats = duplicate_analysis.get("overall_stats", {})
-        dimensions["rows"] = duplicate_stats.get("total_rows")
-        
-        # Calculate columns
-        if dimensions["cells"] and dimensions["rows"]:
-            dimensions["columns"] = dimensions["cells"] // dimensions["rows"]
-        
-        # Get numeric columns count from statistical results
-        statistical_results = tool_results.get("validation_tool_results", {}).get("statistical_tools", {})
-        outlier_analysis = statistical_results.get("outlier_detection_engine", {}).get("analysis", {})
-        outlier_stats = outlier_analysis.get("overall_stats", {})
-        dimensions["numeric_columns"] = outlier_stats.get("total_numeric_columns", 0)
+        except Exception as e:
+            # If extraction fails, just use None values
+            pass
         
         return dimensions
     
@@ -144,17 +175,23 @@ class ASIOneAnalyzer:
     ) -> str:
         """Create comprehensive analysis prompt with correct dataset context"""
         
-        # Format actual dataset size
+        # Format actual dataset size (safely handle None values)
         rows = actual_dimensions.get("rows", "unknown")
         cols = actual_dimensions.get("columns", "unknown") 
         cells = actual_dimensions.get("cells", "unknown")
         numeric_cols = actual_dimensions.get("numeric_columns", "unknown")
         
+        # Safe formatting - only use comma formatting for actual numbers
+        rows_formatted = f"{rows:,}" if isinstance(rows, (int, float)) else str(rows)
+        cols_formatted = str(cols)
+        cells_formatted = f"{cells:,}" if isinstance(cells, (int, float)) else str(cells)
+        numeric_cols_formatted = str(numeric_cols)
+        
         dataset_size_info = f"""ACTUAL DATASET DIMENSIONS (from validation metrics):
-- Total Rows: {rows:,}
-- Total Columns: {cols}
-- Total Cells: {cells:,}
-- Numeric Columns: {numeric_cols}"""
+- Total Rows: {rows_formatted}
+- Total Columns: {cols_formatted}
+- Total Cells: {cells_formatted}
+- Numeric Columns: {numeric_cols_formatted}"""
         
         # Format sample context
         sample_info = f"""COLUMN STRUCTURE (sample for context only):
@@ -215,23 +252,36 @@ Focus on the ACTUAL dataset dimensions provided above. The sample data is only f
         validation_tools = tool_results.get("validation_tool_results", {})
         for category, tools in validation_tools.items():
             formatted.append(f"\n{category.upper().replace('_', ' ')}:")
-            for tool_name, results in tools.items():
-                if results.get("success"):
-                    analysis = results.get("analysis", {})
-                    formatted.append(f"  {tool_name}: {json.dumps(analysis, indent=4)}")
-                else:
-                    formatted.append(f"  {tool_name}: FAILED")
+            
+            # Handle different data structures
+            if isinstance(tools, dict):
+                for tool_name, results in tools.items():
+                    # Check if results is a dict before calling .get()
+                    if isinstance(results, dict):
+                        if results.get("success"):
+                            analysis = results.get("analysis", {})
+                            formatted.append(f"  {tool_name}: {json.dumps(analysis, indent=4)}")
+                        else:
+                            formatted.append(f"  {tool_name}: FAILED")
+                    else:
+                        # If results is not a dict (e.g., a score), just display it
+                        formatted.append(f"  {tool_name}: {results}")
+            else:
+                formatted.append(f"  {tools}")
         
         # Legal tools
         legal_tools = tool_results.get("legal_tool_results", {})
         if legal_tools:
             formatted.append(f"\nLEGAL COMPLIANCE:")
             for tool_name, results in legal_tools.items():
-                if results.get("success"):
-                    analysis = results.get("analysis", {})
-                    formatted.append(f"  {tool_name}: {json.dumps(analysis, indent=4)}")
+                if isinstance(results, dict):
+                    if results.get("success"):
+                        analysis = results.get("analysis", {})
+                        formatted.append(f"  {tool_name}: {json.dumps(analysis, indent=4)}")
+                    else:
+                        formatted.append(f"  {tool_name}: FAILED")
                 else:
-                    formatted.append(f"  {tool_name}: FAILED")
+                    formatted.append(f"  {tool_name}: {results}")
         
         return "\n".join(formatted)
     
