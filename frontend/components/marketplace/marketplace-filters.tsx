@@ -1,4 +1,3 @@
-// components/marketplace/minimal-filters.tsx
 "use client"
 
 import { Card, CardContent } from "@/components/ui/card"

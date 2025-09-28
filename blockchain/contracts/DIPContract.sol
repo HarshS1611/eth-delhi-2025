@@ -12,7 +12,7 @@ import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import {IERC4906} from "@openzeppelin/contracts/interfaces/IERC4906.sol";
 
 /* ============================================================
- * DIPDataNFT — minimal ERC721 for dataset licenses (OZ v5 safe)
+ * DIPDataNFT — minimal ERC721 for dataset licenses 
  * ============================================================*/
 contract DIPDataNFT is ERC721, AccessControl, IERC4906 {
     bytes32 public constant MINTER_ROLE = keccak256("MINTER_ROLE");
@@ -154,8 +154,8 @@ contract DIPDataDAO is Ownable, ReentrancyGuard {
 
     uint256 public nextDatasetId = 1;
 
-    // Default revenue split: 80% creator, 18% DAO, 2% Ops, 0% Rewards
-    Split   public split = Split({ creator: 8000, dao: 1800, ops: 200, rewards: 0 });
+    // Default revenue split: 80% creator, 15% DAO, 2% Ops, 3% Rewards
+    Split   public split = Split({ creator: 8000, dao: 1500, ops: 200, rewards: 300 });
     address public daoTreasury;
     address public operationsTreasury;
 
@@ -594,3 +594,4 @@ contract DIPStaking is Ownable, ReentrancyGuard {
         }
     }
 }
+

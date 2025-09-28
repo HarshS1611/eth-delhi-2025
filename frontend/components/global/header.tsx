@@ -3,7 +3,7 @@
 import Link from "next/link"
 import { useEffect, useState } from "react"
 import { Button } from "@/components/ui/button"
-import { appKit } from "@/lib/wallet" // your Reown AppKit setup
+import { appKit } from "@/lib/wallet" 
 
 export function Header() {
   const [mounted, setMounted] = useState(false)

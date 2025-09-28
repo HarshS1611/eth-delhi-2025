@@ -68,8 +68,31 @@ export const DATA_DAO_ABI = [
 
 /** STAKING */
 export const STAKE_ABI = [
-  { type:"function", name:"stakedBalance", stateMutability:"view", inputs:[{name:"user",type:"address"}], outputs:[{type:"uint256"}]},
-  { type:"function", name:"stakeToken", stateMutability:"view", inputs:[], outputs:[{type:"address"}]},
+  // reads
+  { type:"function", name:"stakeToken",   stateMutability:"view", inputs:[], outputs:[{type:"address"}]},
+  { type:"function", name:"rewardsToken", stateMutability:"view", inputs:[], outputs:[{type:"address"}]},
+  { type:"function", name:"stakedBalance",stateMutability:"view", inputs:[{name:"user",type:"address"}], outputs:[{type:"uint256"}]},
+  { type:"function", name:"pendingRewards",stateMutability:"view", inputs:[{type:"address"}], outputs:[{type:"uint256"}]},
+  { type:"function", name:"users", stateMutability:"view", inputs:[{type:"address"}], outputs:[
+    {type:"uint256", name:"amount"},
+    {type:"uint256", name:"tierIndex"},
+    {type:"uint256", name:"stakedAt"},
+    {type:"uint256", name:"lastRPT"},
+    {type:"uint256", name:"boostUntil"},
+    {type:"uint256", name:"boostBps"},
+  ]},
+  { type:"function", name:"tiers", stateMutability:"view", inputs:[{type:"uint256"}], outputs:[
+    {type:"string",  name:"name"},
+    {type:"uint256", name:"minStake"},
+    {type:"uint256", name:"rewardsMultiplier"}, // percent (100 = 1.0x)
+  ]},
+  // writes
+  { type:"function", name:"stake",   stateMutability:"nonpayable", inputs:[{type:"uint256"},{type:"uint256"}], outputs:[]},
+  { type:"function", name:"unstake", stateMutability:"nonpayable", inputs:[{type:"uint256"}], outputs:[]},
+
+  { type:"function", name:"pendingRewards", stateMutability:"view", inputs:[{name:"user",type:"address"}], outputs:[{type:"uint256"}]},
+  { type:"function", name:"totalRewardsDistributed", stateMutability:"view", inputs:[], outputs:[{type:"uint256"}]},
+  { type:"function", name:"claimRewards", stateMutability:"nonpayable", inputs:[], outputs:[]},
 ] as const
 
 /** NFT minimal */

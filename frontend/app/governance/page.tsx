@@ -1,29 +1,27 @@
-// app/governance/page.tsx
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
-import { useAccount, usePublicClient, useWriteContract } from "wagmi"
+import { useAccount, useWriteContract } from "wagmi"
 import { Header } from "@/components/global/header"
 import { ProposalCard } from "@/components/governance/proposal-card"
 import { GovernanceStats } from "@/components/governance/governance-stats"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Button } from "@/components/ui/button"
 import { useToast } from "@/hooks/use-toast"
 import { Plus, Vote } from "lucide-react"
-import Link from "next/link"
-
+import { DaoOnchainWidget } from "@/components/governance/dao-onchain-widget"
+import { Button } from "@/components/ui/button"
 import { ADDR, DATA_DAO_ABI } from "@/lib/contracts"
-
-type Status = "active" | "passed" | "rejected" | "pending"
-type Category = "platform" | "treasury" | "technical" | "governance"
+import { pub } from "@/lib/dao"       
+import { shapeDataset, statusFromEnum, type ShapedDataset } from "@/lib/shapers"
+import { useRouter } from "next/navigation"
 
 type UiProposal = {
   id: string
   title: string
   description: string
   proposer: { name: string; address: string; verified: boolean }
-  status: Status
-  category: Category
+  status: "active" | "passed" | "rejected" | "pending"
+  category: "governance"
   votesFor: number
   votesAgainst: number
   totalVotes: number
@@ -32,184 +30,127 @@ type UiProposal = {
   endDate: string
   createdDate: string
   hasVoted: boolean
-  userVote?: "for" | "against"
 }
 
 function short(addr: string) {
-  return addr ? `${addr.slice(0, 6)}…${addr.slice(-4)}` : "-"
-}
-
-function statusFromEnum(val: number): Status {
-  // DIPDataDAO.Status { Pending(0), Approved(1), Rejected(2), Paused(3) }
-  if (val === 0) return "active"   // Pending → voting open
-  if (val === 1) return "passed"   // Approved
-  if (val === 2) return "rejected" // Rejected
-  if (val === 3) return "pending"  // Paused (not open for voting)
-  return "active"
+  return addr ? `${addr.slice(0,6)}…${addr.slice(-4)}` : ""
 }
 
 export default function GovernancePage() {
+  const router = useRouter()
   const { address } = useAccount()
-  const client = usePublicClient()
   const { toast } = useToast()
+  const write = useWriteContract()
 
-  const { writeContractAsync } = useWriteContract()
+  const [loading, setLoading] = useState(false)
+  const [items, setItems] = useState<ShapedDataset[]>([])
+  const [requiredQuorum, setRequiredQuorum] = useState<number>(1)
 
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-  const [proposals, setProposals] = useState<UiProposal[]>([])
-  const [activeTab, setActiveTab] = useState("proposals")
-  const [pendingVoteIds, setPendingVoteIds] = useState<Record<string, boolean>>({})
-  const [refreshKey, setRefreshKey] = useState(0)
+  async function load() {
+    setLoading(true)
+    try {
+      const nextId = (await pub.readContract({
+        address: ADDR.DATA_DAO,
+        abi: DATA_DAO_ABI,
+        functionName: "nextDatasetId",
+      })) as bigint
 
-  // Fetch datasets as proposals
-  useEffect(() => {
-    let alive = true
-    async function run() {
-      if (!client) return
-      setLoading(true)
-      setError(null)
-      try {
-        // 1) Get current quorum target (approvalVotes)
-        const requiredQuorumBn = (await client.readContract({
-          address: ADDR.DATA_DAO,
-          abi: DATA_DAO_ABI,
-          functionName: "approvalVotes",
-        })) as bigint
-        const requiredQuorum = Number(requiredQuorumBn ?? 1n)
+      const req = (await pub.readContract({
+        address: ADDR.DATA_DAO,
+        abi: DATA_DAO_ABI,
+        functionName: "approvalVotes",
+      })) as bigint
+      setRequiredQuorum(Number(req))
 
-        // 2) Determine id range: 1..nextDatasetId-1
-        const nextIdBn = (await client.readContract({
-          address: ADDR.DATA_DAO,
-          abi: DATA_DAO_ABI,
-          functionName: "nextDatasetId",
-        })) as bigint
+      const count = Number(nextId - 1n)
+      if (count <= 0) { setItems([]); return }
 
-        const nextId = Number(nextIdBn ?? 1n)
-        const maxId = Math.max(0, nextId - 1)
-        if (maxId === 0) {
-          if (alive) setProposals([])
-          return
-        }
-
-        const ids = Array.from({ length: maxId }, (_, i) => BigInt(i + 1))
-
-        // 3) Read datasets (and hasVoted for current wallet)
-        const rows = await Promise.all(
-          ids.map(async (id) => {
-            const d: any = await client.readContract({
-              address: ADDR.DATA_DAO,
-              abi: DATA_DAO_ABI,
-              functionName: "datasets",
-              args: [id],
-            })
-
-            console.log("d", d.votes)
-
-            const votes = Number(d.votes ?? 0n)
-            const status = statusFromEnum(Number(d.status ?? 0))
-            const voterHasVoted =
-              address
-                ? ((await client.readContract({
-                    address: ADDR.DATA_DAO,
-                    abi: DATA_DAO_ABI,
-                    functionName: "hasVoted",
-                    args: [id, address as `0x${string}`],
-                  })) as boolean)
-                : false
-
-            const p: UiProposal = {
-              id: id.toString(),
-              title: String(d.title || `Dataset #${id}`),
-              description: d.tokenUri ? String(d.tokenUri) : `CID: ${String(d.cid || "")}`,
-              proposer: { name: short(String(d.creator)), address: String(d.creator), verified: true },
-              status,
-              category: "governance",
-              votesFor: votes,
-              votesAgainst: 0,      // contract only stores approvals
-              totalVotes: votes,     // same as votesFor
-              quorum: votes,         // show progress against requiredQuorum
-              requiredQuorum,        // from approvalVotes()
-              endDate: "",           // not tracked on-chain
-              createdDate: "",       // not tracked on-chain
-              hasVoted: voterHasVoted,
-            }
-            return p
+      const ids = Array.from({ length: count }, (_, i) => BigInt(i + 1))
+      const rows = await Promise.all(
+        ids.map(async (id) => {
+          const d = await pub.readContract({
+            address: ADDR.DATA_DAO,
+            abi: DATA_DAO_ABI,
+            functionName: "datasets",
+            args: [id],
           })
-        )
-
-        if (alive) setProposals(rows)
-      } catch (e: any) {
-        if (alive) setError(String(e?.message || e))
-      } finally {
-        if (alive) setLoading(false)
-      }
+          return shapeDataset(id, d)
+        })
+      )
+      setItems(rows)
+    } finally {
+      setLoading(false)
     }
-    run()
-    return () => {
-      alive = false
-    }
-  }, [client, address, refreshKey])
-
-  const activeProposals = useMemo(
-    () => proposals.filter((p) => p.status === "active"),
-    [proposals]
-  )
-  const completedProposals = useMemo(
-    () => proposals.filter((p) => p.status === "passed" || p.status === "rejected"),
-    [proposals]
-  )
-
-  // Send tx and wait properly
-  async function castVote(datasetId: bigint, support: boolean) {
-    if (!client) throw new Error("RPC client not ready")
-    const hash = await writeContractAsync({
-      address: ADDR.DATA_DAO,
-      abi: DATA_DAO_ABI,
-      functionName: "vote",
-      args: [datasetId, support],
-    })
-    // Now the hash is defined; wait for inclusion
-    await client.waitForTransactionReceipt({ hash })
   }
 
-  const handleVote = async (proposalId: string, vote: "for" | "against") => {
-    if (!address) {
-      toast({ title: "Connect wallet", description: "Please connect your wallet to vote.", variant: "destructive" })
-      return
-    }
+  useEffect(() => { load() }, [])
 
-    setPendingVoteIds((m) => ({ ...m, [proposalId]: true }))
+  // For each dataset, check if this user has voted
+  const [votedMap, setVotedMap] = useState<Record<string, boolean>>({})
+  useEffect(() => {
+    let alive = true
+    if (!address || items.length === 0) { setVotedMap({}); return }
+    (async () => {
+      const out: Record<string, boolean> = {}
+      await Promise.all(items.map(async (it) => {
+        const hv = await pub.readContract({
+          address: ADDR.DATA_DAO,
+          abi: DATA_DAO_ABI,
+          functionName: "hasVoted",
+          args: [BigInt(it.id), address as `0x${string}`],
+        }) as boolean
+        out[it.id] = hv
+      }))
+      if (alive) setVotedMap(out)
+    })()
+    return () => { alive = false }
+  }, [address, items])
+
+  const proposals: UiProposal[] = useMemo(() => {
+    return items.map((d) => {
+      const status =
+        d.status === "approved" ? "passed" :
+        d.status === "rejected" ? "rejected" :
+        d.status === "paused"   ? "pending" : "active"
+
+      return {
+        id: d.id,
+        title: d.title,
+        description: d.tokenUri || `CID: ${d.cid}`,
+        proposer: { name: short(d.creator), address: d.creator, verified: true },
+        status,
+        category: "governance",
+        votesFor: d.votes,     // DAO stores approvals
+        votesAgainst: 0,
+        totalVotes: d.votes,
+        quorum: d.votes,
+        requiredQuorum,
+        endDate: "",
+        createdDate: "",
+        hasVoted: !!votedMap[d.id],
+      }
+    })
+  }, [items, votedMap, requiredQuorum])
+
+  const activeProposals = proposals.filter(p => p.status === "active")
+  const completedProposals = proposals.filter(p => p.status === "passed" || p.status === "rejected")
+
+  async function onVote(proposalId: string, vote: "for" | "against") {
     try {
-      await castVote(BigInt(proposalId), vote === "for")
-      toast({ title: "Vote submitted", description: `Your vote ${vote.toUpperCase()} is on-chain.` })
+      // Contract only tracks approvals; ignore "against" on-chain
+      const approve = (vote === "for")
 
-      // refetch from chain
-      setRefreshKey((x) => x + 1)
-
-      // optimistic local bump (kept small, real state comes from refetch)
-      setProposals((prev) =>
-        prev.map((p) =>
-          p.id === proposalId
-            ? {
-                ...p,
-                hasVoted: true,
-                userVote: vote,
-                votesFor: p.votesFor + (vote === "for" ? 1 : 0),
-                totalVotes: p.totalVotes + (vote === "for" ? 1 : 0),
-                quorum: p.quorum + (vote === "for" ? 1 : 0),
-              }
-            : p
-        )
-      )
-    } catch (e: any) {
-      toast({
-        title: "Voting failed",
-        description: String(e?.shortMessage || e?.message || e) || "Transaction failed.",
-        variant: "destructive",
+      const hash = await write.writeContractAsync({
+        address: ADDR.DATA_DAO,
+        abi: DATA_DAO_ABI,
+        functionName: "vote",
+        args: [BigInt(proposalId), approve],
       })
-    } finally {
-      setPendingVoteIds((m) => ({ ...m, [proposalId]: false }))
+      await pub.waitForTransactionReceipt({ hash })
+      toast({ title: "Vote cast!", description: approve ? "Approved" : "Recorded (against ignored on-chain)" })
+      await load()
+    } catch (e: any) {
+      toast({ title: "Vote failed", description: String(e?.message || e), variant: "destructive" })
     }
   }
 
@@ -222,79 +163,56 @@ export default function GovernancePage() {
             DAO <span className="bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">Governance</span>
           </h1>
           <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
-            Datasets are proposals. Vote to move high-quality data to “Approved”.
+            Datasets are proposals. Vote to approve them.
           </p>
         </div>
 
-        <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-8">
+        <div className="mb-6"><DaoOnchainWidget /></div>
+
+        <Tabs defaultValue="proposals" className="space-y-8">
           <div className="flex items-center justify-between">
             <TabsList className="grid w-auto grid-cols-2">
               <TabsTrigger value="proposals">Proposals</TabsTrigger>
               <TabsTrigger value="stats">Statistics</TabsTrigger>
             </TabsList>
-
-            {/* Creating proposals = uploading datasets */}
-            <Link href="/upload">
-              <Button className="bg-gradient-to-r from-primary to-accent hover:opacity-90">
-                <Plus className="mr-2 h-4 w-4" /> Upload Dataset
-              </Button>
-            </Link>
+            <Button
+              onClick={() => router.push("/upload")}
+              className="bg-gradient-to-r from-primary to-accent hover:opacity-90"
+            >
+              <Plus className="mr-2 h-4 w-4" /> Create Proposal
+            </Button>
           </div>
 
           <TabsContent value="proposals" className="space-y-8">
-            {error && (
-              <div className="text-sm text-red-500 border border-red-500/30 rounded-md p-3">
-                {error}
+            {loading && <div className="text-center py-6 text-muted-foreground">Loading on-chain proposals…</div>}
+
+            <div className="space-y-6">
+              <div className="flex items-center space-x-2">
+                <Vote className="h-5 w-5 text-primary" />
+                <h2 className="text-xl font-semibold">Active Proposals ({activeProposals.length})</h2>
               </div>
-            )}
 
-            {loading && proposals.length === 0 ? (
-              <div className="text-center py-12 text-muted-foreground">
-                Loading on-chain proposals…
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                {activeProposals.map((p) => (
+                  <ProposalCard key={p.id} proposal={p as any} onVote={onVote} />
+                ))}
               </div>
-            ) : (
-              <>
-                <div className="space-y-6">
-                  <div className="flex items-center space-x-2">
-                    <Vote className="h-5 w-5 text-primary" />
-                    <h2 className="text-xl font-semibold">
-                      Active Proposals ({activeProposals.length})
-                    </h2>
-                  </div>
 
-                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                    {activeProposals.map((proposal) => (
-                      <ProposalCard
-                        key={proposal.id}
-                        proposal={{
-                          ...proposal,
-                          // while tx is pending, mark as voted to disable buttons
-                          hasVoted: proposal.hasVoted || !!pendingVoteIds[proposal.id],
-                        } as any}
-                        onVote={handleVote}
-                      />
-                    ))}
-                  </div>
-
-                  {activeProposals.length === 0 && (
-                    <div className="text-center py-12">
-                      <p className="text-muted-foreground">No active proposals on-chain.</p>
-                    </div>
-                  )}
+              {activeProposals.length === 0 && !loading && (
+                <div className="text-center py-12">
+                  <p className="text-muted-foreground">No active proposals.</p>
                 </div>
+              )}
+            </div>
 
-                <div className="space-y-6">
-                  <h2 className="text-xl font-semibold">
-                    Recent Decisions ({completedProposals.length})
-                  </h2>
-                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                    {completedProposals.slice(0, 6).map((proposal) => (
-                      <ProposalCard key={proposal.id} proposal={proposal as any} onVote={handleVote} />
-                    ))}
-                  </div>
-                </div>
-              </>
-            )}
+            <div className="space-y-6">
+              <h2 className="text-xl font-semibold">Recent Decisions ({completedProposals.length})</h2>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                {completedProposals.slice(0, 4).map((p) => (
+                  <ProposalCard key={p.id} proposal={p as any} onVote={onVote} />
+                ))}
+              </div>
+            </div>
           </TabsContent>
 
           <TabsContent value="stats" className="space-y-6">

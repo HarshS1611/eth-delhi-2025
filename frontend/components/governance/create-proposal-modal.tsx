@@ -71,13 +71,11 @@ export function CreateProposalModal({ isOpen, onClose, onSubmit }: CreateProposa
 
     setIsSubmitting(true)
 
-    // Simulate proposal creation
     await new Promise((resolve) => setTimeout(resolve, 2000))
 
     onSubmit(formData)
     setIsSubmitting(false)
 
-    // Reset form
     setFormData({
       title: "",
       description: "",

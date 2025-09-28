@@ -1,4 +1,3 @@
-// lib/datasets.ts
 "use client"
 
 export type LighthouseItem = {
@@ -40,7 +39,7 @@ export function mapLighthouseToCard(item: LighthouseItem) {
     tags: [],
     contributor: { name: item.publicKey?.slice(0, 10) || "Uploader", verified: true },
     qualityScore: 80,
-    price: 0, // Lighthouse files: free to open
+    price: 0,
     downloads: 0,
     uploadDate: toDateStr(item.createdAt),
     fileSize: formatBytes(sizeNum),

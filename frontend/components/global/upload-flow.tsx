@@ -122,7 +122,6 @@ export function UploadFlow() {
       metaCid = meta.cid
       setMetadataCid(metaCid)
     } catch {
-      // metadata upload is optional – continue
     }
 
     return { fileCid: up.cid, metadataCid: metaCid }

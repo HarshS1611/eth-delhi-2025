@@ -6,13 +6,14 @@ import { usePublicClient, useWriteContract, useAccount } from "wagmi"
 import { ADDR, DATA_DAO_ABI, ERC20_ABI } from "./contracts"
 import { createPublicClient, http } from "viem"
 import { sepolia } from "wagmi/chains"
+import { shapeDataset } from "./shapers" 
 
 const chain = sepolia
 export const pub = createPublicClient({ chain, transport: http() })
 
 type OnchainRow = any
 
-function shapeDataset(id: bigint, d: OnchainRow) {
+function useDataset(id: bigint, d: OnchainRow) {
   const title = d.title ?? d[1]
   const tokenUri = d.tokenUri ?? d[2]
   const creator = d.creator ?? d[3]
@@ -59,27 +60,26 @@ export function useDatasets() {
           functionName: "nextDatasetId",
         })) as bigint
 
-        const count = Number(nextId ?? 0n)
+        const count = Number(nextId - 1n) 
         if (count === 0) {
           if (alive) setItems([])
           return
         }
 
-        const ids = Array.from({ length: count }, (_, i) => BigInt(i))
+        const ids = Array.from({ length: count }, (_, i) => BigInt(i + 1)) 
         const rows = await Promise.all(
           ids.map(async (id) => {
-            const d = (await pc.readContract({
+            const d = await pub.readContract({
               address: ADDR.DATA_DAO,
               abi: DATA_DAO_ABI,
               functionName: "datasets",
               args: [id],
-            })) as OnchainRow
-            return { id, d }
+            })
+            return shapeDataset(id, d)      
           })
         )
 
-        if (alive) setItems(rows.map(({ id, d }) => shapeDataset(id, d)))
-      } catch (e: any) {
+        if (alive) setItems(rows)      } catch (e: any) {
         if (alive) setError(String(e?.shortMessage ?? e?.message ?? e))
       } finally {
         if (alive) setIsLoading(false)
@@ -137,7 +137,6 @@ export function usePurchase(datasetId: bigint) {
   const { address } = useAccount()
   const { writeContractAsync } = useWriteContract()
 
-  // If your token is dynamic, read paymentToken() here. Using fixed LSDC for now.
   const paymentToken = ADDR.LSDC
 
   const approve = async (amount: bigint) => {

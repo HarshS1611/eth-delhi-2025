@@ -8,12 +8,10 @@ import { http } from "viem"
 const projectId = process.env.NEXT_PUBLIC_REOWN_PROJECT_ID!
 if (!projectId) throw new Error("Missing NEXT_PUBLIC_REOWN_PROJECT_ID")
 
-// Optional custom RPC
 const rpcUrl = process.env.NEXT_PUBLIC_RPC_URL
 
 export const networks = [sepolia]
 
-// Wagmi adapter uses our RPC if provided
 export const wagmiAdapter = new WagmiAdapter({
   projectId,
   networks,
