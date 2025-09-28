@@ -1,7 +1,8 @@
+// frontend/components/marketplace/upload-flow.tsx
 "use client"
 
 import type React from "react"
-import { useState, useCallback } from "react"
+import { useState, useCallback, useMemo } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -13,6 +14,8 @@ import { useToast } from "@/hooks/use-toast"
 import { Upload, FileText, Brain, Cloud, CheckCircle, ArrowRight, X, Plus, ExternalLink } from "lucide-react"
 import { lighthouseCidUrl, uploadFileToLighthouse, uploadJsonToLighthouse } from "@/lib/lightHouse"
 import { useSubmitFlow } from "@/lib/marketplace"
+import { useTokenInfo } from "@/lib/token"
+import { ADDR } from "@/lib/contracts"
 
 interface UploadStep {
   id: number
@@ -40,6 +43,8 @@ interface AIAnalysis {
 export function UploadFlow() {
   const { toast } = useToast()
   const { submitNow } = useSubmitFlow()
+  const { symbol: paySym = "LSDC" } = useTokenInfo(ADDR.LSDC)
+
   const [currentStep, setCurrentStep] = useState(0)
   const [uploadedFile, setUploadedFile] = useState<File | null>(null)
   const [metadata, setMetadata] = useState<DatasetMetadata>({
@@ -53,21 +58,29 @@ export function UploadFlow() {
   const [aiAnalysis, setAIAnalysis] = useState<AIAnalysis | null>(null)
   const [isAnalyzing, setIsAnalyzing] = useState(false)
   const [uploadProgress, setUploadProgress] = useState(0)
-  const [cid, setCid] = useState<string | null>(null)
-  const [metadataCid, setMetadataCid] = useState<string | null>(null)
+
+  // CIDs we produce
+  const [fileCid, setFileCid] = useState<string | null>(null)        // raw dataset file
+  const [manifestCid, setManifestCid] = useState<string | null>(null)// dataset manifest (rich app metadata)
+  const [nftMetaCid, setNftMetaCid] = useState<string | null>(null)  // ERC-721 metadata JSON (tokenURI)
+
+  // NEW: pricing / gating inputs (contract needs these)
+  const [priceHuman, setPriceHuman] = useState<string>("") // in LSDC (human)
+  const [tokenGated, setTokenGated] = useState<boolean>(false)
+  const [minTokenBuy, setMinTokenBuy] = useState<string>("0")  // DIP (human)
+  const [minStakeBuy, setMinStakeBuy] = useState<string>("0")  // DIP (human)
 
   const steps: UploadStep[] = [
     { id: 0, title: "Upload Dataset", description: "Select and upload your dataset file", status: currentStep === 0 ? "active" : currentStep > 0 ? "completed" : "pending" },
     { id: 1, title: "Add Metadata", description: "Provide dataset information and tags", status: currentStep === 1 ? "active" : currentStep > 1 ? "completed" : "pending" },
     { id: 2, title: "AI Analysis", description: "AI quality scoring and price suggestion", status: currentStep === 2 ? "active" : currentStep > 2 ? "completed" : "pending" },
-    { id: 3, title: "IPFS Upload", description: "Store dataset via Lighthouse", status: currentStep === 3 ? "active" : currentStep > 3 ? "completed" : "pending" },
+    { id: 3, title: "IPFS Upload", description: "Store dataset + NFT metadata via Lighthouse", status: currentStep === 3 ? "active" : currentStep > 3 ? "completed" : "pending" },
     { id: 4, title: "Complete", description: "Publish to marketplace", status: currentStep === 4 ? "completed" : "pending" },
   ]
 
   const handleFileUpload = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
     if (!file) return
-
     const valid = ["application/json", "text/csv", "application/xml", "text/xml"]
     if (!valid.includes(file.type)) {
       toast({ title: "Invalid file type", description: "Please upload a JSON, CSV, or XML file.", variant: "destructive" })
@@ -77,9 +90,10 @@ export function UploadFlow() {
       toast({ title: "File too large", description: "Please upload a file smaller than 50MB.", variant: "destructive" })
       return
     }
-
     setUploadedFile(file)
-    setCid(null)
+    setFileCid(null)
+    setManifestCid(null)
+    setNftMetaCid(null)
     setUploadProgress(0)
     toast({ title: "File ready", description: `${file.name} selected.` })
   }, [toast])
@@ -105,26 +119,89 @@ export function UploadFlow() {
     setIsAnalyzing(false)
   }
 
-  async function doLighthouseUpload(): Promise<{ fileCid: string; metadataCid: string | null }> {
-    if (!uploadedFile) throw new Error("No file selected")
-    const up = await uploadFileToLighthouse(uploadedFile, (p) => setUploadProgress(Math.round(p)))
-    setCid(up.cid)
+  // ---- NFT metadata helpers ----
+  function svgPreview(title: string) {
+    const safe = (title || "Dataset").slice(0, 120).replace(/[<&>]/g, s => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[s] as string))
+    return `
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="420">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#6EE7F9"/>
+      <stop offset="100%" stop-color="#A78BFA"/>
+    </linearGradient>
+  </defs>
+  <rect width="100%" height="100%" fill="url(#g)" />
+  <text x="40" y="140" font-size="32" font-family="Inter, system-ui, sans-serif" fill="#0f172a">DIP Dataset License</text>
+  <text x="40" y="200" font-size="28" font-family="Inter, system-ui, sans-serif" fill="#111827" font-weight="700">${safe}</text>
+  <text x="40" y="260" font-size="16" font-family="Inter, system-ui, sans-serif" fill="#111827">IPFS pinned via Lighthouse</text>
+</svg>`.trim()
+  }
 
-    const metaDoc = {
+  function buildNftMetadata(params: {
+    title: string
+    description: string
+    fileCid: string
+    fileName: string
+    category: string
+    tags: string[]
+    qualityScore: number
+  }) {
+    const { title, description, fileCid, fileName, category, tags, qualityScore } = params
+    return {
+      name: title,
+      description: description || `License NFT for dataset ${title}`,
+      external_url: lighthouseCidUrl(fileCid),
+      // You can also upload a PNG and set `image: "ipfs://..."`. Using inline SVG keeps it simple:
+      image_data: svgPreview(title),
+      attributes: [
+        { trait_type: "Category", value: category || "Uncategorized" },
+        { trait_type: "Quality Score", value: String(qualityScore ?? 0) },
+        { trait_type: "File", value: fileName },
+        { trait_type: "CID", value: fileCid },
+        ...(tags || []).map((t) => ({ trait_type: "Tag", value: t })),
+      ],
+    }
+  }
+
+  async function doLighthouseUpload(): Promise<{ fileCid: string; manifestCid: string | null; nftMetaCid: string }> {
+    if (!uploadedFile) throw new Error("No file selected")
+
+    // 1) Upload raw file
+    const up = await uploadFileToLighthouse(uploadedFile, (p) => setUploadProgress(Math.round(p)))
+    setFileCid(up.cid)
+
+    // 2) Upload dataset manifest (rich app metadata; optional but useful for UI/search)
+    const manifest = {
       ...metadata,
       ai: aiAnalysis,
-      file: { name: up.name, size: up.size, cid: up.cid },
+      file: { name: up.name, size: up.size, cid: up.cid, mime: (uploadedFile as File).type },
       createdAt: new Date().toISOString(),
+      // link forward to NFT metadata later (filled after upload)
     }
-    let metaCid: string | null = null
+    let mCid: string | null = null
     try {
-      const meta = await uploadJsonToLighthouse(metaDoc, `${metadata.title || up.name}-metadata.json`)
-      metaCid = meta.cid
-      setMetadataCid(metaCid)
+      const res = await uploadJsonToLighthouse(manifest, `${metadata.title || up.name}-manifest.json`)
+      mCid = res.cid
+      setManifestCid(mCid)
     } catch {
+      // manifest is optional; don't block
     }
 
-    return { fileCid: up.cid, metadataCid: metaCid }
+    // 3) Upload ERC-721 metadata JSON (this becomes tokenUri used by DAO/NFT)
+    const nftMeta = buildNftMetadata({
+      title: metadata.title || up.name,
+      description: metadata.description,
+      fileCid: up.cid,
+      fileName: up.name,
+      category: metadata.category,
+      tags: metadata.tags,
+      qualityScore: aiAnalysis?.qualityScore ?? 0,
+    })
+    const nftRes = await uploadJsonToLighthouse(nftMeta, `${metadata.title || up.name}-nft.json`)
+    const tokenMetaCid = nftRes.cid
+    setNftMetaCid(tokenMetaCid)
+
+    return { fileCid: up.cid, manifestCid: mCid, nftMetaCid: tokenMetaCid }
   }
 
   const handleNextStep = async () => {
@@ -139,21 +216,32 @@ export function UploadFlow() {
       }
       if (currentStep === 2 && !aiAnalysis) {
         await simulateAIAnalysis()
+        return
       }
       if (currentStep === 3) {
-        const { fileCid, metadataCid: mCid } = await doLighthouseUpload()
-        const price = aiAnalysis?.suggestedPrice ?? 10
-        const title = metadata.title || uploadedFile!.name
-        const tokenUri = mCid ? `ipfs://${mCid}` : ""
-        await submitNow({
-          cid: fileCid,
-          title,
-          tokenUri,
-          price,
-          qualityScore: aiAnalysis?.qualityScore ?? 80,
-        })
+        // Require price and ensure it’s a valid number
+        const p = Number(priceHuman)
+        if (!Number.isFinite(p) || p <= 0) {
+          toast({ title: "Set a price", description: `Enter a valid ${paySym} price (e.g., 42)`, variant: "destructive" })
+          return
+        }
+
+        const { fileCid: fCid, manifestCid: mCid, nftMetaCid: nCid } = await doLighthouseUpload()
         setUploadProgress(100)
+
+        // Submit to DAO with the proper tokenUri (ERC-721 metadata)
+        await submitNow({
+          cid: fCid,
+          title: metadata.title || uploadedFile!.name,
+          tokenUri: `ipfs://${nCid}`,
+          price: p, // human LSDC; hook converts to wei
+          qualityScore: aiAnalysis?.qualityScore ?? 80,
+          tokenGated,
+          minTokenForBuy: minTokenBuy,
+          minStakeForBuy: minStakeBuy,
+        })
       }
+
       setCurrentStep((s) => Math.min(s + 1, steps.length - 1))
     } catch (err: any) {
       console.error(err)
@@ -175,6 +263,60 @@ export function UploadFlow() {
                 <Button variant="outline">Choose File</Button>
               </label>
             </div>
+
+            {/* NEW: pricing + gating setup so user gives all contract params up-front */}
+            <Card>
+              <CardHeader><CardTitle>Pricing & Access</CardTitle></CardHeader>
+              <CardContent className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="space-y-2">
+                  <Label>Price ({paySym}) *</Label>
+                  <Input
+                    type="number"
+                    min="0"
+                    step="0.000000000000000001"
+                    value={priceHuman}
+                    onChange={(e) => setPriceHuman(e.target.value)}
+                    placeholder={`e.g., ${aiAnalysis?.suggestedPrice ?? 10}`}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Token Gated?</Label>
+                  <select
+                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                    value={tokenGated ? "yes" : "no"}
+                    onChange={(e) => setTokenGated(e.target.value === "yes")}
+                  >
+                    <option value="no">No (default)</option>
+                    <option value="yes">Yes</option>
+                  </select>
+                </div>
+                <div className="space-y-2">
+                  <Label>Min Stake (DIP)</Label>
+                  <Input
+                    type="number"
+                    min="0"
+                    step="0.000000000000000001"
+                    value={minStakeBuy}
+                    onChange={(e) => setMinStakeBuy(e.target.value)}
+                    disabled={!tokenGated}
+                    placeholder="0"
+                  />
+                </div>
+                <div className="space-y-2 md:col-span-2">
+                  <Label>Min Token Balance (DIP)</Label>
+                  <Input
+                    type="number"
+                    min="0"
+                    step="0.000000000000000001"
+                    value={minTokenBuy}
+                    onChange={(e) => setMinTokenBuy(e.target.value)}
+                    disabled={!tokenGated}
+                    placeholder="0"
+                  />
+                </div>
+              </CardContent>
+            </Card>
+
             {uploadedFile && (
               <Card className="border-primary/20 bg-primary/5">
                 <CardContent className="p-4">
@@ -275,24 +417,26 @@ export function UploadFlow() {
                 <CardTitle className="flex items-center space-x-2"><Cloud className="h-5 w-5 text-primary" /><span>IPFS Upload (Lighthouse)</span></CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
-                <p className="text-muted-foreground">Your dataset and metadata will be stored via Lighthouse.</p>
+                <p className="text-muted-foreground">We will upload the dataset file, a dataset manifest, and your NFT metadata JSON.</p>
                 <div className="space-y-2">
                   <div className="flex justify-between text-sm"><span>Upload Progress</span><span>{uploadProgress}%</span></div>
                   <Progress value={uploadProgress} className="w-full" />
                 </div>
-                {cid && (
+                {(fileCid || manifestCid || nftMetaCid) && (
                   <div className="rounded-md bg-muted/50 p-3 text-sm flex flex-col gap-2">
-                    <div className="flex items-center gap-2"><span className="font-medium">File CID</span><code className="break-all">{cid}</code></div>
-                    <div className="flex items-center gap-2"><span className="font-medium">Metadata CID</span><code className="break-all">{metadataCid}</code></div>
-                    <div className="flex gap-2">
-                      <a className="inline-flex items-center text-primary text-sm underline" href={lighthouseCidUrl(cid)} target="_blank" rel="noreferrer">
-                        View file on gateway <ExternalLink className="ml-1 h-3 w-3" />
-                      </a>
-                      {metadataCid && (
-                        <a className="inline-flex items-center text-primary text-sm underline" href={lighthouseCidUrl(metadataCid)} target="_blank" rel="noreferrer">
-                          View metadata <ExternalLink className="ml-1 h-3 w-3" />
-                        </a>
-                      )}
+                    {fileCid && <div className="flex items-center gap-2"><span className="font-medium">File CID</span><code className="break-all">{fileCid}</code></div>}
+                    {manifestCid && <div className="flex items-center gap-2"><span className="font-medium">Manifest CID</span><code className="break-all">{manifestCid}</code></div>}
+                    {nftMetaCid && <div className="flex items-center gap-2"><span className="font-medium">NFT Metadata CID</span><code className="break-all">{nftMetaCid}</code></div>}
+                    <div className="flex flex-wrap gap-3">
+                      {fileCid && <a className="inline-flex items-center text-primary text-sm underline" href={lighthouseCidUrl(fileCid)} target="_blank" rel="noreferrer">
+                        View file <ExternalLink className="ml-1 h-3 w-3" />
+                      </a>}
+                      {manifestCid && <a className="inline-flex items-center text-primary text-sm underline" href={lighthouseCidUrl(manifestCid)} target="_blank" rel="noreferrer">
+                        View manifest <ExternalLink className="ml-1 h-3 w-3" />
+                      </a>}
+                      {nftMetaCid && <a className="inline-flex items-center text-primary text-sm underline" href={lighthouseCidUrl(nftMetaCid)} target="_blank" rel="noreferrer">
+                        View NFT metadata <ExternalLink className="ml-1 h-3 w-3" />
+                      </a>}
                     </div>
                   </div>
                 )}
@@ -310,28 +454,27 @@ export function UploadFlow() {
               <CardContent className="p-6 text-center">
                 <CheckCircle className="mx-auto h-16 w-16 text-green-500 mb-4" />
                 <h3 className="text-2xl font-bold mb-2">Dataset Published Successfully!</h3>
-                <p className="text-muted-foreground mb-6">Your dataset is uploaded and ready on the marketplace.</p>
-                {cid && (
-                  <div className="flex justify-center gap-3 mb-4">
-                    <a className="text-primary underline inline-flex items-center" href={lighthouseCidUrl(cid)} target="_blank" rel="noreferrer">
-                      Open on Gateway <ExternalLink className="ml-1 h-3 w-3" />
-                    </a>
-                    {metadataCid && (
-                      <a className="text-primary underline inline-flex items-center" href={lighthouseCidUrl(metadataCid)} target="_blank" rel="noreferrer">
-                        Metadata JSON <ExternalLink className="ml-1 h-3 w-3" />
-                      </a>
-                    )}
-                  </div>
-                )}
+                <p className="text-muted-foreground mb-6">Your dataset is uploaded and submitted on-chain.</p>
+                <div className="flex justify-center gap-3 mb-4">
+                  {fileCid && <a className="text-primary underline inline-flex items-center" href={lighthouseCidUrl(fileCid)} target="_blank" rel="noreferrer">Open File <ExternalLink className="ml-1 h-3 w-3" /></a>}
+                  {manifestCid && <a className="text-primary underline inline-flex items-center" href={lighthouseCidUrl(manifestCid)} target="_blank" rel="noreferrer">Manifest JSON <ExternalLink className="ml-1 h-3 w-3" /></a>}
+                  {nftMetaCid && <a className="text-primary underline inline-flex items-center" href={lighthouseCidUrl(nftMetaCid)} target="_blank" rel="noreferrer">NFT Metadata <ExternalLink className="ml-1 h-3 w-3" /></a>}
+                </div>
                 <div className="flex flex-col sm:flex-row gap-4 justify-center">
                   <Button className="bg-gradient-to-r from-primary to-accent">View in Marketplace<ArrowRight className="ml-2 h-4 w-4" /></Button>
                   <Button variant="outline" onClick={() => {
                     setCurrentStep(0)
                     setUploadedFile(null)
-                    setCid(null)
-                    setMetadataCid(null)
+                    setFileCid(null)
+                    setManifestCid(null)
+                    setNftMetaCid(null)
                     setUploadProgress(0)
                     setAIAnalysis(null)
+                    setPriceHuman("")
+                    setTokenGated(false)
+                    setMinTokenBuy("0")
+                    setMinStakeBuy("0")
+                    setMetadata({ title: "", description: "", tags: [], category: "", source: "" })
                   }}>Upload Another Dataset</Button>
                 </div>
               </CardContent>

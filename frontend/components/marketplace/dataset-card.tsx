@@ -31,6 +31,7 @@ export function DatasetCard({
   dataset: Dataset
   onLicense: (d: Dataset) => void
 }) {
+  console.log(dataset)
   const title = dataset.title || dataset.cid || "Untitled dataset"
   const desc =
     dataset.description ||
@@ -57,12 +58,12 @@ export function DatasetCard({
             <h3 className="font-semibold text-lg mb-2 group-hover:text-primary transition-colors line-clamp-2">
               {title}
             </h3>
-            <p className="text-sm text-muted-foreground line-clamp-2 mb-3">{desc}</p>
+            <p className="text-sm text-muted-foreground line-clamp-2 mb-3">{desc.substring(0,20)}...{desc.substring(desc.length-20,desc.length)}</p>
           </div>
-          <div className="flex flex-col items-end space-y-2">
+          {/* <div className="flex flex-col items-end space-y-2">
             <Badge variant={qualityBadge.variant} className="text-xs">{qualityBadge.label}</Badge>
             <div className={`text-sm font-medium ${getQualityColor(qs)}`}>{qs}% Quality</div>
-          </div>
+          </div> */}
         </div>
         <div className="flex flex-wrap gap-1 mb-3">
           <Badge variant="outline" className="text-xs">{category}</Badge>

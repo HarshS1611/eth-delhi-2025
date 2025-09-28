@@ -79,7 +79,8 @@ export function useDatasets() {
           })
         )
 
-        if (alive) setItems(rows)      } catch (e: any) {
+        if (alive) setItems(rows)      
+      } catch (e: any) {
         if (alive) setError(String(e?.shortMessage ?? e?.message ?? e))
       } finally {
         if (alive) setIsLoading(false)

@@ -44,7 +44,7 @@ export default function MarketplacePage() {
         description: it.description,
         category: "On-Chain",
         tags: [],
-        contributor: { name: it.contributor?.name || "Creator", verified: true },
+        contributor: { name: it.creator || "Creator", verified: true },
         qualityScore: it.qualityScore,
         price: it.price,
         downloads: it.downloads,

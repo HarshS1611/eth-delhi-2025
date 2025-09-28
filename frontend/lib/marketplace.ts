@@ -43,28 +43,56 @@ export async function fetchLighthouseCards(lastKey: string | null = null): Promi
   return mapped
 }
 
+
+import { useWriteContract } from "wagmi"
+import { parseUnits } from "viem"
+import { ADDR, DATA_DAO_ABI } from "@/lib/contracts"
+import { useTokenInfo } from "@/lib/token"
+import { pub } from "@/lib/dao"
+
+type SubmitArgs = {
+  cid: string
+  title: string
+  tokenUri: string          // ipfs://CID of ERC-721 metadata JSON
+  price: number | string    // human units (e.g., 42.5)
+  qualityScore: number      // 0..100 (uint8 safe)
+  tokenGated?: boolean
+  minTokenForBuy?: number | string  // DIP units (human)
+  minStakeForBuy?: number | string  // DIP units (human)
+}
+
+
 /** Upload page helper – wraps the submitDataset hook cleanly */
 export function useSubmitFlow() {
-  const { submit } = useSubmitDataset()
+  const { writeContractAsync } = useWriteContract()
+  // payment token = LSDC; DIP has 18d as well
+  const { decimals: lsdDecimals = 18 } = useTokenInfo(ADDR.LSDC)
 
-  async function submitNow(args: {
-    cid: string
-    title: string
-    tokenUri: string
-    price: number
-    qualityScore: number
-  }) {
-    await submit({
-      cid: args.cid,
-      title: args.title,
-      tokenUri: args.tokenUri || `ipfs://${args.cid}`,
-      priceEther: String(args.price ?? 0),
-      qualityScore: Math.round(args.qualityScore ?? 80),
-      tokenGated: false,
-      minTokenForBuy: "0",
-      minStakeForBuy: "0",
+  async function submitNow(input: SubmitArgs) {
+    const priceWei = parseUnits(String(input.price ?? 0), lsdDecimals)
+    const q = Math.max(0, Math.min(255, Math.floor(input.qualityScore ?? 0))) // uint8 safe
+
+    // DIP uses 18 decimals. If you changed DIP decimals, adjust here.
+    const to18 = (x: number | string | undefined) => parseUnits(String(x ?? 0), 18)
+
+    const hash = await writeContractAsync({
+      address: ADDR.DATA_DAO,
+      abi: DATA_DAO_ABI,
+      functionName: "submitDataset",
+      args: [
+        input.cid,
+        input.title,
+        input.tokenUri,
+        priceWei,
+        q,
+        Boolean(input.tokenGated),
+        to18(input.minTokenForBuy),
+        to18(input.minStakeForBuy),
+      ],
     })
-    return true
+
+    await pub.waitForTransactionReceipt({ hash })
+    return hash
   }
 
   return { submitNow }
