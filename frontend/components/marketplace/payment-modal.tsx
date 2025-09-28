@@ -1,64 +1,104 @@
 "use client"
 
-import { useState } from "react"
+import { useMemo, useState } from "react"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
 import { useToast } from "@/hooks/use-toast"
 import { Coins, Shield, Download, CheckCircle, Loader2, Wallet, ArrowRight } from "lucide-react"
+import { lighthouseCidUrl } from "@/lib/lightHouse"
+import { ADDR, DATA_DAO_ABI, ERC20_ABI } from "@/lib/contracts"
+import type { Dataset } from "./dataset-card"
+import { useAccount, useWriteContract } from "wagmi"
+import { pub } from "@/lib/dao"
 
-interface Dataset {
-  id: string
-  title: string
-  description: string
-  contributor: {
-    name: string
-    verified: boolean
-  }
-  qualityScore: number
-  price: number
-  fileSize: string
-  fileType: string
-}
-
-interface PaymentModalProps {
+export function PaymentModal({
+  dataset,
+  isOpen,
+  onClose,
+}: {
   dataset: Dataset | null
   isOpen: boolean
   onClose: () => void
-}
-
-export function PaymentModal({ dataset, isOpen, onClose }: PaymentModalProps) {
+}) {
   const { toast } = useToast()
+  const { address } = useAccount()
+  const { writeContractAsync } = useWriteContract()
+
+  const price = typeof dataset?.price === "number" ? dataset!.price : 0
+  const priceWei = useMemo(() => {
+    try {
+      return BigInt(Math.round(price * 1e18))
+    } catch {
+      return 0n
+    }
+  }, [price])
+
+  const datasetId = useMemo(() => {
+    try {
+      if (dataset?.id === undefined || dataset?.id === null) return null
+      return BigInt(dataset.id as any)
+    } catch {
+      return null
+    }
+  }, [dataset])
+
+  const hasOnchain = datasetId !== null
+
   const [isProcessing, setIsProcessing] = useState(false)
   const [isCompleted, setIsCompleted] = useState(false)
 
-  if (!dataset) return null
-
-  const platformFee = dataset.price * 0.05 // 5% platform fee
-  const contributorShare = dataset.price * 0.85 // 85% to contributor
-  const daoTreasury = dataset.price * 0.1 // 10% to DAO treasury
-  const totalAmount = dataset.price
-
   const handlePayment = async () => {
+    if (!dataset) return
+    if (!address) {
+      toast({ title: "Connect wallet", description: "Please connect your wallet to continue.", variant: "destructive" })
+      return
+    }
+
     setIsProcessing(true)
+    try {
+      if (hasOnchain) {
+        // 1) Approve LSDC to the DAO for `priceWei`
+        const approveHash = await writeContractAsync({
+          address: ADDR.LSDC,
+          abi: ERC20_ABI,
+          functionName: "approve",
+          args: [ADDR.DATA_DAO, priceWei],
+        })
+        await pub.waitForTransactionReceipt({ hash: approveHash })
 
-    // Simulate payment processing
-    await new Promise((resolve) => setTimeout(resolve, 3000))
+        // 2) Purchase dataset on the DAO
+        const purchaseHash = await writeContractAsync({
+          address: ADDR.DATA_DAO,
+          abi: DATA_DAO_ABI,
+          functionName: "purchase",
+          args: [datasetId!],
+        })
+        await pub.waitForTransactionReceipt({ hash: purchaseHash })
+      } else {
+        // Off-chain-only entry (fallback demo)
+        await new Promise((r) => setTimeout(r, 800))
+      }
 
-    setIsProcessing(false)
-    setIsCompleted(true)
-
-    toast({
-      title: "Payment successful!",
-      description: "You now have access to the dataset. NFT license has been minted to your wallet.",
-    })
-
-    // Auto-close after success
-    setTimeout(() => {
-      setIsCompleted(false)
-      onClose()
-    }, 3000)
+      setIsCompleted(true)
+      toast({
+        title: "Payment successful!",
+        description: hasOnchain ? "Purchase recorded on-chain." : "Access granted.",
+      })
+      setTimeout(() => {
+        setIsCompleted(false)
+        onClose()
+      }, 1200)
+    } catch (e: any) {
+      toast({
+        title: "Payment failed",
+        description: String(e?.shortMessage || e?.message || e),
+        variant: "destructive",
+      })
+    } finally {
+      setIsProcessing(false)
+    }
   }
 
   if (isCompleted) {
@@ -68,18 +108,33 @@ export function PaymentModal({ dataset, isOpen, onClose }: PaymentModalProps) {
           <div className="text-center py-6">
             <CheckCircle className="mx-auto h-16 w-16 text-green-500 mb-4" />
             <h3 className="text-xl font-semibold mb-2">Payment Successful!</h3>
-            <p className="text-muted-foreground mb-4">
-              Your NFT license has been minted and the dataset is now available for download.
-            </p>
-            <Button className="bg-gradient-to-r from-primary to-accent">
-              <Download className="mr-2 h-4 w-4" />
-              Download Dataset
-            </Button>
+            {dataset?.cid ? (
+              <a
+                className="inline-flex items-center bg-gradient-to-r from-primary to-accent text-white px-4 py-2 rounded-md"
+                href={lighthouseCidUrl(dataset.cid)}
+                target="_blank"
+                rel="noreferrer"
+              >
+                <Download className="mr-2 h-4 w-4" /> Open on Gateway
+              </a>
+            ) : (
+              <Button disabled>
+                <Download className="mr-2 h-4 w-4" /> Link unavailable
+              </Button>
+            )}
           </div>
         </DialogContent>
       </Dialog>
     )
   }
+
+  const title = dataset?.title || dataset?.cid || "Dataset"
+  const quality = dataset?.qualityScore ?? 80
+  const fileSize = dataset?.fileSize || "-"
+  const fileType = dataset?.fileType || "-"
+
+  const totalAmount = price
+  const platformFee = price * 0.05
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
@@ -90,86 +145,63 @@ export function PaymentModal({ dataset, isOpen, onClose }: PaymentModalProps) {
             <span>License Dataset</span>
           </DialogTitle>
           <DialogDescription>
-            Purchase a license to access and download this dataset. Payment is processed using LSDC stablecoin.
+            {hasOnchain
+              ? "Pay with LSDC to unlock this dataset. The purchase is recorded on-chain."
+              : "This entry is not yet on-chain; payment will unlock the IPFS link."}
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-6">
-          {/* Dataset Info */}
           <div className="space-y-3">
-            <h4 className="font-medium">{dataset.title}</h4>
+            <h4 className="font-medium">{title}</h4>
             <div className="flex items-center justify-between text-sm">
               <span className="text-muted-foreground">Contributor</span>
               <div className="flex items-center space-x-1">
-                <span>{dataset.contributor.name}</span>
-                {dataset.contributor.verified && <Shield className="h-3 w-3 text-primary" />}
+                <span>{dataset?.contributor?.name || "Uploader"}</span>
+                {dataset?.contributor?.verified && <Shield className="h-3 w-3 text-primary" />}
               </div>
             </div>
             <div className="flex items-center justify-between text-sm">
               <span className="text-muted-foreground">Quality Score</span>
-              <Badge variant="default">{dataset.qualityScore}%</Badge>
+              <Badge variant="default">{quality}%</Badge>
             </div>
             <div className="flex items-center justify-between text-sm">
-              <span className="text-muted-foreground">File Details</span>
+              <span className="text-muted-foreground">File</span>
               <span>
-                {dataset.fileSize} • {dataset.fileType}
+                {fileSize} • {fileType}
               </span>
             </div>
           </div>
 
           <Separator />
 
-          {/* Payment Breakdown */}
-          <div className="space-y-3">
-            <h4 className="font-medium">Payment Breakdown</h4>
-            <div className="space-y-2 text-sm">
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Dataset Price</span>
-                <span>{dataset.price.toFixed(2)} LSDC</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Platform Fee (5%)</span>
-                <span>{platformFee.toFixed(2)} LSDC</span>
-              </div>
-              <Separator />
-              <div className="flex justify-between font-medium">
-                <span>Total Amount</span>
-                <span>{totalAmount.toFixed(2)} LSDC</span>
-              </div>
+          <div className="space-y-3 text-sm">
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Dataset Price</span>
+              <span>{price.toFixed(2)} LSDC</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Platform Fee (5%)</span>
+              <span>{platformFee.toFixed(2)} LSDC</span>
+            </div>
+            <Separator />
+            <div className="flex justify-between font-medium">
+              <span>Total Amount</span>
+              <span>{totalAmount.toFixed(2)} LSDC</span>
             </div>
           </div>
 
-          {/* Fund Distribution */}
-          <div className="bg-muted/50 rounded-lg p-4 space-y-2">
-            <h5 className="text-sm font-medium">Fund Distribution</h5>
-            <div className="space-y-1 text-xs text-muted-foreground">
-              <div className="flex justify-between">
-                <span>To Contributor ({dataset.contributor.name})</span>
-                <span>{contributorShare.toFixed(2)} LSDC (85%)</span>
-              </div>
-              <div className="flex justify-between">
-                <span>To DAO Treasury</span>
-                <span>{daoTreasury.toFixed(2)} LSDC (10%)</span>
-              </div>
-              <div className="flex justify-between">
-                <span>Platform Operations</span>
-                <span>{platformFee.toFixed(2)} LSDC (5%)</span>
-              </div>
-            </div>
-          </div>
-
-          {/* Payment Button */}
           <div className="space-y-3">
             <Button
               onClick={handlePayment}
-              disabled={isProcessing}
+              disabled={isProcessing || !dataset}
               className="w-full bg-gradient-to-r from-primary to-accent hover:opacity-90"
               size="lg"
             >
               {isProcessing ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Processing Payment...
+                  Processing…
                 </>
               ) : (
                 <>
@@ -179,11 +211,6 @@ export function PaymentModal({ dataset, isOpen, onClose }: PaymentModalProps) {
                 </>
               )}
             </Button>
-
-            <div className="flex items-center justify-center space-x-2 text-xs text-muted-foreground">
-              <Shield className="h-3 w-3" />
-              <span>Secure payment powered by blockchain technology</span>
-            </div>
           </div>
         </div>
       </DialogContent>

@@ -71,13 +71,11 @@ export function CreateProposalModal({ isOpen, onClose, onSubmit }: CreateProposa
 
     setIsSubmitting(true)
 
-    // Simulate proposal creation
     await new Promise((resolve) => setTimeout(resolve, 2000))
 
     onSubmit(formData)
     setIsSubmitting(false)
 
-    // Reset form
     setFormData({
       title: "",
       description: "",
@@ -180,7 +178,7 @@ export function CreateProposalModal({ isOpen, onClose, onSubmit }: CreateProposa
           </div>
 
           <div className="flex justify-end space-x-3">
-            <Button type="button" variant="outline" onClick={onClose} disabled={isSubmitting}>
+            <Button type="Button" variant="outline" onClick={onClose} disabled={isSubmitting}>
               Cancel
             </Button>
             <Button

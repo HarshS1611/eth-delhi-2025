@@ -1,313 +1,284 @@
 "use client"
 
-import type React from "react"
-
-import { useState } from "react"
+import { useState, useMemo } from "react"
+import { useAccount, useWriteContract } from "wagmi"
+import { parseUnits } from "viem"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { useToast } from "@/hooks/use-toast"
-import { Coins, Shield, Zap, Crown, Star, Lock } from "lucide-react"
+import { Coins, Shield, Zap, Crown, Star, Lock, Download, Undo2 } from "lucide-react"
+import { useStakeInfo, useStakedBalance, useStakeUser } from "@/lib/stake"
+import { useTokenBalance, useTokenInfo, fromUnit } from "@/lib/token"
+import { ADDR, ERC20_ABI, STAKE_ABI } from "@/lib/contracts"
 
-interface StakingTier {
-  id: string
-  name: string
-  minStake: number
-  maxStake: number | null
-  apy: number
-  votingMultiplier: number
-  benefits: string[]
-  icon: React.ComponentType<{ className?: string }>
-  color: string
-  bgColor: string
-}
-
-const stakingTiers: StakingTier[] = [
-  {
-    id: "bronze",
-    name: "Bronze Contributor",
-    minStake: 100,
-    maxStake: 999,
-    apy: 8,
-    votingMultiplier: 1,
-    benefits: ["Basic voting rights", "Monthly rewards", "Community access"],
-    icon: Shield,
-    color: "text-orange-500",
-    bgColor: "bg-orange-500/10",
-  },
-  {
-    id: "silver",
-    name: "Silver Curator",
-    minStake: 1000,
-    maxStake: 4999,
-    apy: 12,
-    votingMultiplier: 1.5,
-    benefits: ["Enhanced voting power", "Weekly rewards", "Priority support", "Beta features"],
-    icon: Star,
-    color: "text-gray-400",
-    bgColor: "bg-gray-400/10",
-  },
-  {
-    id: "gold",
-    name: "Gold Validator",
-    minStake: 5000,
-    maxStake: 19999,
-    apy: 16,
-    votingMultiplier: 2,
-    benefits: ["2x voting power", "Daily rewards", "Governance proposals", "Exclusive events"],
-    icon: Crown,
-    color: "text-yellow-500",
-    bgColor: "bg-yellow-500/10",
-  },
-  {
-    id: "diamond",
-    name: "Diamond Guardian",
-    minStake: 20000,
-    maxStake: null,
-    apy: 20,
-    votingMultiplier: 3,
-    benefits: ["3x voting power", "Instant rewards", "Council membership", "Revenue sharing"],
-    icon: Zap,
-    color: "text-blue-500",
-    bgColor: "bg-blue-500/10",
-  },
-]
+const TierIcon = [Shield, Star, Crown, Zap]
 
 export function StakingInterface() {
   const { toast } = useToast()
-  const [selectedTier, setSelectedTier] = useState<string | null>(null)
-  const [stakeAmount, setStakeAmount] = useState("")
-  const [isStaking, setIsStaking] = useState(false)
+  const { address } = useAccount()
 
-  // Mock user data
-  const userBalance = 15000
-  const currentStake = 2500
-  const currentTier = stakingTiers.find(
-    (tier) => currentStake >= tier.minStake && (!tier.maxStake || currentStake <= tier.maxStake),
-  )
+  const { stakeToken, rewardsToken, tiers, loading } = useStakeInfo()
+  const stakeTokenAddr = stakeToken ?? ADDR.DIP            // <-- DIP is the stake token
+  const rewardsTokenAddr = rewardsToken ?? ADDR.LSDC       // LSDC is rewards
 
-  const handleStake = async () => {
-    const amount = Number.parseFloat(stakeAmount)
-    if (!amount || amount <= 0) {
-      toast({
-        title: "Invalid amount",
-        description: "Please enter a valid staking amount.",
-        variant: "destructive",
+  const walletBal = useTokenBalance(stakeTokenAddr, address as `0x${string}` | undefined)
+  const stakeTokenInfo = useTokenInfo(stakeTokenAddr)
+  const rewardsTokenInfo = useTokenInfo(rewardsTokenAddr)
+
+  const staked = useStakedBalance(address as `0x${string}` | undefined)
+  const user   = useStakeUser(address as `0x${string}` | undefined)
+
+  const decimals = stakeTokenInfo.decimals || 18
+  const stakedHuman  = Number(fromUnit(staked.value, decimals))
+  const balanceHuman = Number(fromUnit(walletBal.value, decimals))
+  const pendingHuman = Number(fromUnit(user.pending, rewardsTokenInfo.decimals || 18))
+
+  const tierFromIndex = (i: number | null | undefined) => {
+    const idx = typeof i === "number" && i >=0 && i < 4 ? i : 0
+    return tiers[idx] || { name: "Bronze", minStake: 0n, rewardsMultiplier: 100n }
+  }
+  const currentTier = tierFromIndex(user.info?.tierIndex)
+
+  // local inputs per tier (stake & unstake)
+  const [stakeAmount, setStakeAmount]     = useState<Record<number, string>>({0:"",1:"",2:"",3:""})
+  const [unstakeAmount, setUnstakeAmount] = useState<string>("")
+
+  const write = useWriteContract()
+
+  async function handleStake(tierIndex: number) {
+    try {
+      if (!address) throw new Error("Connect wallet first")
+      const amtStr = stakeAmount[tierIndex] || ""
+      const amt = Number(amtStr)
+      if (!amtStr || isNaN(amt) || amt <= 0) throw new Error("Enter stake amount")
+      const min = Number(fromUnit(tiers[tierIndex].minStake, decimals))
+      if (amt < min) throw new Error(`Minimum for ${tiers[tierIndex].name} is ${min} ${stakeTokenInfo.symbol}`)
+
+      const amountWei = parseUnits(amtStr, decimals)
+
+      // 1) Approve DIP to staking contract
+      const approveHash = await write.writeContractAsync({
+        address: stakeTokenAddr,
+        abi: ERC20_ABI,
+        functionName: "approve",
+        args: [ADDR.STAKE, amountWei],
       })
-      return
-    }
+      await waitReceipt(approveHash)
 
-    if (amount > userBalance) {
-      toast({
-        title: "Insufficient balance",
-        description: "You don't have enough D3 tokens to stake this amount.",
-        variant: "destructive",
+      // 2) Stake
+      const stakeHash = await write.writeContractAsync({
+        address: ADDR.STAKE,
+        abi: STAKE_ABI,
+        functionName: "stake",
+        args: [amountWei, BigInt(tierIndex)],
       })
-      return
+      await waitReceipt(stakeHash)
+
+      toast({ title: "Staked!", description: `Staked ${amt} ${stakeTokenInfo.symbol} in ${tiers[tierIndex].name}.` })
+      setStakeAmount((s) => ({ ...s, [tierIndex]: "" }))
+    } catch (e: any) {
+      toast({ title: "Stake failed", description: String(e?.message || e), variant: "destructive" })
     }
-
-    setIsStaking(true)
-
-    // Simulate staking transaction
-    await new Promise((resolve) => setTimeout(resolve, 2000))
-
-    setIsStaking(false)
-    setStakeAmount("")
-    setSelectedTier(null)
-
-    toast({
-      title: "Staking successful!",
-      description: `Successfully staked ${amount} D3 tokens. Your rewards will start accruing immediately.`,
-    })
   }
 
-  const calculateRewards = (amount: number, tier: StakingTier) => {
-    const dailyReward = (amount * tier.apy) / 365 / 100
-    const monthlyReward = dailyReward * 30
-    const yearlyReward = amount * (tier.apy / 100)
+  async function handleUnstake() {
+    try {
+      if (!address) throw new Error("Connect wallet first")
+      const amt = Number(unstakeAmount)
+      if (!unstakeAmount || isNaN(amt) || amt <= 0) throw new Error("Enter unstake amount")
+      const amountWei = parseUnits(unstakeAmount, decimals)
 
-    return { dailyReward, monthlyReward, yearlyReward }
+      const tx = await write.writeContractAsync({
+        address: ADDR.STAKE,
+        abi: STAKE_ABI,
+        functionName: "unstake",
+        args: [amountWei],
+      })
+      await waitReceipt(tx)
+      toast({ title: "Unstaked!", description: `Unstaked ${amt} ${stakeTokenInfo.symbol}.` })
+      setUnstakeAmount("")
+    } catch (e: any) {
+      toast({ title: "Unstake failed", description: String(e?.message || e), variant: "destructive" })
+    }
+  }
+
+  async function handleClaim() {
+    try {
+      if (!address) throw new Error("Connect wallet first")
+      const tx = await write.writeContractAsync({
+        address: ADDR.STAKE,
+        abi: STAKE_ABI,
+        functionName: "claimRewards",
+        args: [],
+      })
+      await waitReceipt(tx)
+      toast({ title: "Rewards claimed!", description: `Claimed ${pendingHuman.toFixed(4)} ${rewardsTokenInfo.symbol}.` })
+    } catch (e: any) {
+      toast({ title: "Claim failed", description: String(e?.message || e), variant: "destructive" })
+    }
+  }
+
+  async function waitReceipt(hash: `0x${string}`) {
+    const { pub } = await import("@/lib/dao")
+    await pub.waitForTransactionReceipt({ hash })
   }
 
   return (
     <div className="space-y-6">
-      {/* Current Staking Status */}
-      {currentStake > 0 && currentTier && (
-        <Card className="border-primary/20 bg-primary/5">
-          <CardHeader>
-            <CardTitle className="flex items-center space-x-2">
-              <currentTier.icon className={`h-5 w-5 ${currentTier.color}`} />
-              <span>Current Stake: {currentTier.name}</span>
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-              <div className="text-center">
-                <div className="text-2xl font-bold text-primary">{currentStake.toLocaleString()}</div>
-                <div className="text-sm text-muted-foreground">DataCoin Staked</div>
-              </div>
-              <div className="text-center">
-                <div className="text-2xl font-bold text-primary">{currentTier.apy}%</div>
-                <div className="text-sm text-muted-foreground">APY</div>
-              </div>
-              <div className="text-center">
-                <div className="text-2xl font-bold text-chart-2">{currentTier.votingMultiplier}x</div>
-                <div className="text-sm text-muted-foreground">Voting Power</div>
-              </div>
-              <div className="text-center">
-                <div className="text-2xl font-bold text-chart-3">
-                  {calculateRewards(currentStake, currentTier).dailyReward.toFixed(2)}
-                </div>
-                <div className="text-sm text-muted-foreground">Daily LSDC</div>
-              </div>
+      <Card className="border-primary/20 bg-primary/5">
+        <CardHeader>
+          <CardTitle className="flex items-center space-x-2">
+            <span>Current Stake</span>
+            {user.info && (
+              <Badge variant="secondary">{tierFromIndex(user.info.tierIndex).name}</Badge>
+            )}
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <div className="text-center">
+            <div className="text-2xl font-bold text-primary">
+              {stakedHuman.toLocaleString(undefined, { maximumFractionDigits: 4 })}
             </div>
-
-            <div className="flex flex-wrap gap-4">
-              Benfits: 
-              {currentTier.benefits.map((benefit) => (
-                <Badge key={benefit} variant="secondary" className="text-xs bg-primary/10">
-                  {benefit}
-                </Badge>
-              ))}
+            <div className="text-sm text-muted-foreground">{stakeTokenInfo.symbol} Staked</div>
+          </div>
+          <div className="text-center">
+            <div className="text-2xl font-bold text-chart-2">
+              {(Number(currentTier.rewardsMultiplier) / 100).toFixed(2)}x
             </div>
-          </CardContent>
-        </Card>
-      )}
+            <div className="text-sm text-muted-foreground">Tier Multiplier</div>
+          </div>
+          <div className="text-center">
+            <div className="text-2xl font-bold">{Number(user.info?.boostBps ?? 0) / 100}%</div>
+            <div className="text-sm text-muted-foreground">Gov Boost</div>
+          </div>
+          <div className="text-center">
+            <div className="text-2xl font-bold text-chart-3">
+              {pendingHuman.toLocaleString(undefined, { maximumFractionDigits: 4 })}
+            </div>
+            <div className="text-sm text-muted-foreground">Claimable ({rewardsTokenInfo.symbol})</div>
+          </div>
+        </CardContent>
+      </Card>
 
-      {/* Available Balance */}
+      {/* Wallet balance */}
       <Card>
         <CardContent className="p-6">
           <div className="flex items-center justify-between">
             <div>
               <h3 className="text-lg font-semibold">Available Balance</h3>
-              <p className="text-sm text-muted-foreground">D3 tokens ready for staking</p>
+              <p className="text-sm text-muted-foreground">
+                {stakeTokenInfo.symbol} ready for staking
+              </p>
             </div>
             <div className="text-right">
-              <div className="text-2xl font-bold">{userBalance.toLocaleString()}</div>
-              <div className="text-sm text-muted-foreground">D3 Tokens</div>
+              <div className="text-2xl font-bold">
+                {balanceHuman.toLocaleString(undefined, { maximumFractionDigits: 4 })}
+              </div>
+              <div className="text-sm text-muted-foreground">{stakeTokenInfo.symbol}</div>
             </div>
           </div>
         </CardContent>
       </Card>
 
-      {/* Staking Tiers */}
+      {/* Tiers from chain */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {stakingTiers.map((tier) => {
-          const isSelected = selectedTier === tier.id
-          const isCurrentTier = currentTier?.id === tier.id
-          const stakeAmountNum = Number.parseFloat(stakeAmount) || 0
-          const projectedRewards = stakeAmountNum > 0 ? calculateRewards(stakeAmountNum, tier) : null
+        {tiers.map((tier, idx) => {
+          const Icon = TierIcon[idx] || Shield
+          const minHuman = Number(fromUnit(tier.minStake, decimals))
+          const isCurrent = user.info?.tierIndex === idx
+          const inputVal = stakeAmount[idx] ?? ""
 
           return (
-            <Card
-              key={tier.id}
-              className={`cursor-pointer transition-all duration-300 ${
-                isSelected
-                  ? "border-primary bg-primary/5 shadow-lg"
-                  : isCurrentTier
-                    ? "border-accent/50 bg-accent/5"
-                    : "border-border/40 hover:border-border/60 hover:bg-card/80"
-              }`}
-              onClick={() => setSelectedTier(isSelected ? null : tier.id)}
-            >
+            <Card key={idx} className={`transition-all ${isCurrent ? "border-accent/50 bg-accent/5" : "border-border/40"}`}>
               <CardHeader>
                 <CardTitle className="flex items-center justify-between">
-                  <div className="flex items-center space-x-2">
-                    <div className={`p-2 rounded-lg ${tier.bgColor}`}>
-                      <tier.icon className={`h-5 w-5 ${tier.color}`} />
+                  <div className="flex items-center gap-2">
+                    <div className="p-2 rounded-lg bg-muted/50">
+                      <Icon className="h-5 w-5 text-primary" />
                     </div>
                     <span>{tier.name}</span>
                   </div>
-                  {isCurrentTier && <Badge variant="default">Current</Badge>}
+                  {isCurrent && <Badge variant="secondary">Current</Badge>}
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <div className="text-sm text-muted-foreground">Min Stake</div>
-                    <div className="font-semibold">{tier.minStake.toLocaleString()} D3</div>
+                    <div className="font-semibold">
+                      {minHuman.toLocaleString()} {stakeTokenInfo.symbol}
+                    </div>
                   </div>
                   <div>
-                    <div className="text-sm text-muted-foreground">APY</div>
-                    <div className="font-semibold text-green-500">{tier.apy}%</div>
+                    <div className="text-sm text-muted-foreground">Multiplier</div>
+                    <div className="font-semibold text-green-500">
+                      {(Number(tier.rewardsMultiplier)/100).toFixed(2)}x
+                    </div>
                   </div>
                 </div>
 
                 <div className="space-y-2">
-                  <div className="text-sm text-muted-foreground">Benefits</div>
-                  <div className="flex flex-wrap gap-1">
-                    {tier.benefits.slice(0, 2).map((benefit) => (
-                      <Badge key={benefit} variant="outline" className="text-xs">
-                        {benefit}
-                      </Badge>
-                    ))}
-                    {tier.benefits.length > 2 && (
-                      <Badge variant="outline" className="text-xs">
-                        +{tier.benefits.length - 2} more
-                      </Badge>
-                    )}
-                  </div>
+                  <label className="text-sm font-medium">Stake Amount</label>
+                  <Input
+                    type="number"
+                    min={minHuman}
+                    step="any"
+                    placeholder={`Min: ${minHuman}`}
+                    value={inputVal}
+                    onChange={(e) => setStakeAmount((s) => ({ ...s, [idx]: e.target.value }))}
+                  />
+                  <Button
+                    onClick={() => handleStake(idx)}
+                    className="w-full bg-gradient-to-r from-primary to-accent hover:opacity-90"
+                  >
+                    <Lock className="mr-2 h-4 w-4" />
+                    Stake
+                  </Button>
                 </div>
-
-                {isSelected && (
-                  <div className="space-y-4 pt-4 border-t">
-                    <div className="space-y-2">
-                      <label className="text-sm font-medium">Stake Amount</label>
-                      <Input
-                        type="number"
-                        placeholder={`Min: ${tier.minStake} D3`}
-                        value={stakeAmount}
-                        onChange={(e) => setStakeAmount(e.target.value)}
-                        min={tier.minStake}
-                        max={tier.maxStake || userBalance}
-                      />
-                    </div>
-
-                    {projectedRewards && (
-                      <div className="bg-muted/50 rounded-lg p-3 space-y-2">
-                        <div className="text-sm font-medium">Projected Rewards</div>
-                        <div className="grid grid-cols-3 gap-2 text-xs">
-                          <div>
-                            <div className="text-muted-foreground">Daily</div>
-                            <div className="font-medium">{projectedRewards.dailyReward.toFixed(2)} LSDC</div>
-                          </div>
-                          <div>
-                            <div className="text-muted-foreground">Monthly</div>
-                            <div className="font-medium">{projectedRewards.monthlyReward.toFixed(2)} LSDC</div>
-                          </div>
-                          <div>
-                            <div className="text-muted-foreground">Yearly</div>
-                            <div className="font-medium">{projectedRewards.yearlyReward.toFixed(2)} LSDC</div>
-                          </div>
-                        </div>
-                      </div>
-                    )}
-
-                    <Button
-                      onClick={handleStake}
-                      disabled={isStaking || !stakeAmount || Number.parseFloat(stakeAmount) < tier.minStake}
-                      className="w-full bg-gradient-to-r from-primary to-accent hover:opacity-90"
-                    >
-                      {isStaking ? (
-                        <>
-                          <Lock className="mr-2 h-4 w-4 animate-spin" />
-                          Staking...
-                        </>
-                      ) : (
-                        <>
-                          <Coins className="mr-2 h-4 w-4" />
-                          Stake {stakeAmount || tier.minStake} D3
-                        </>
-                      )}
-                    </Button>
-                  </div>
-                )}
               </CardContent>
             </Card>
           )
         })}
       </div>
+
+      {/* Actions: claim + unstake */}
+      <Card>
+        <CardContent className="p-6 grid grid-cols-1 md:grid-cols-3 gap-4">
+          {/* <div className="flex flex-col">
+            <span className="text-sm text-muted-foreground mb-2">Claimable</span>
+            <div className="text-xl font-semibold mb-2">
+              {pendingHuman.toLocaleString(undefined, { maximumFractionDigits: 4 })} {rewardsTokenInfo.symbol}
+            </div>
+            <Button onClick={handleClaim} className="w-full">
+              <Download className="mr-2 h-4 w-4" /> Claim Rewards
+            </Button>
+          </div> */}
+
+          <div className="md:col-span-2">
+            <span className="text-sm text-muted-foreground">Unstake Amount</span>
+            <div className="mt-2 flex gap-2">
+              <Input
+                type="number"
+                step="any"
+                placeholder="0.0"
+                value={unstakeAmount}
+                onChange={(e) => setUnstakeAmount(e.target.value)}
+              />
+              <Button variant="outline" onClick={() => setUnstakeAmount(String(stakedHuman))}>
+                Max
+              </Button>
+              <Button onClick={handleUnstake}>
+                <Undo2 className="mr-2 h-4 w-4" /> Unstake
+              </Button>
+            </div>
+            <div className="text-xs text-muted-foreground mt-2">
+              Note: Unstake is locked for 7 days from your first stake (contract `LOCK_PERIOD`).
+            </div>
+          </div>
+        </CardContent>
+      </Card>
     </div>
   )
 }
