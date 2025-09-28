@@ -15,7 +15,7 @@ sys.path.insert(0, str(current_dir))
 from fastapi import FastAPI, HTTPException, BackgroundTasks, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 from typing import Dict, List, Any, Optional
 import asyncio
@@ -25,6 +25,31 @@ import shutil
 from datetime import datetime
 import uuid
 import logging
+import uvicorn
+from pydantic import BaseModel
+
+def clean_for_json(obj):
+    """Convert any problematic types to JSON-safe types"""
+    if obj is None:
+        return None
+    elif isinstance(obj, dict):
+        # Handle dict keys that might be numpy types
+        cleaned_dict = {}
+        for key, value in obj.items():
+            # Convert keys to strings if they're not JSON-safe
+            if isinstance(key, (str, int, float, bool)) or key is None:
+                clean_key = key
+            else:
+                clean_key = str(key)
+            cleaned_dict[clean_key] = clean_for_json(value)
+        return cleaned_dict
+    elif isinstance(obj, (list, tuple)):
+        return [clean_for_json(item) for item in obj]
+    elif isinstance(obj, (str, int, float, bool)):
+        return obj
+    else:
+        # Convert everything else to string
+        return str(obj)
 
 # Try to import our orchestrator with fallback
 try:
@@ -44,10 +69,8 @@ except ImportError as e:
             self.grade = "F"
             self.data_quality_score = 0.0
             self.legal_compliance_score = 0.0
-            self.executive_summary = "Orchestrator agent not available"
             self.processing_time_seconds = 0.0
             self.critical_issues = ["Agent dependencies not available"]
-            self.recommendations = ["Install required dependencies"]
             self.errors = ["Orchestrator agent import failed"]
 
 # Configure logging
@@ -95,13 +118,11 @@ class ValidationResultAPI(BaseModel):
     timestamp: str
     
     # Summary information
-    executive_summary: str
     processing_time_seconds: float
     
-    # Issues and recommendations
+    # Issues and validation results
     critical_issues: List[str]
     issues_found: List[str]
-    recommendations: List[str]
     warnings: List[str]
     
     # All individual tool results - no consolidation
@@ -289,7 +310,7 @@ async def get_validation_status(request_id: str):
         estimated_completion="2-5 minutes" if status == "processing" else None
     )
 
-@app.get("/validate/result/{request_id}", response_model=ValidationResultAPI)
+@app.get("/validate/result/{request_id}")
 async def get_validation_result(request_id: str):
     """Get validation result"""
     
@@ -304,8 +325,11 @@ async def get_validation_result(request_id: str):
     
     result = validation_results[request_id]
     
-    # Convert to API response format
-    return ValidationResultAPI(**result)
+    # Clean the result for JSON serialization
+    cleaned_result = clean_for_json(result)
+    
+    # Return using regular JSONResponse
+    return JSONResponse(content=cleaned_result)
 
 @app.delete("/validate/result/{request_id}")
 async def delete_validation_result(request_id: str):
@@ -416,25 +440,28 @@ async def process_validation_task(
             result.dataset_name = dataset_name
             result.errors = ["Validation agents not available - dependencies missing"]
             result.critical_issues = ["Please ensure all agent dependencies are installed"]
-            result.recommendations = ["Run: pip install -r requirements.txt"]
         
         if result.success:
             # Extract all individual tool results from validation and legal agents
-            validation_data = result.validation_results if hasattr(result, 'validation_results') else {}
-            legal_data = result.legal_results if hasattr(result, 'legal_results') else {}
+            validation_data = result.validation_tool_results if hasattr(result, 'validation_tool_results') else {}
+            legal_data = result.legal_tool_results if hasattr(result, 'legal_tool_results') else {}
+            
+            # Extract critical issues from errors and warnings
+            critical_issues = result.errors + result.warnings
+            if not critical_issues:
+                critical_issues = ["No critical issues detected"]
             
             # Build API result with ALL individual tool results - NO CONSOLIDATION
+            # Note: executive_summary and recommendations will be handled by LLM analysis
             api_result = {
                 "request_id": request_id,
                 "success": True,
                 "dataset_name": result.dataset_name,
                 "timestamp": result.timestamp,
-                "executive_summary": result.executive_summary,
                 "processing_time_seconds": result.processing_time_seconds,
-                "critical_issues": result.critical_issues,
-                "issues_found": result.critical_issues,  # For API compatibility
-                "recommendations": result.recommendations,
-                "warnings": [],
+                "critical_issues": critical_issues,
+                "issues_found": critical_issues,  # For API compatibility
+                "warnings": result.warnings,
                 "agents_used": ["validation_agent", "legal_compliance_agent"] if ORCHESTRATOR_AVAILABLE else [],
                 "errors": result.errors,
                 
@@ -444,6 +471,8 @@ async def process_validation_task(
                 "raw_legal_results": legal_data
             }
             
+            # Clean types before storing
+            api_result = clean_for_json(api_result)
             validation_results[request_id] = api_result
             validation_status[request_id] = "completed"
             
@@ -454,16 +483,14 @@ async def process_validation_task(
     except Exception as e:
         logger.error(f"Validation error for request {request_id}: {str(e)}")
         validation_status[request_id] = "failed"
-        validation_results[request_id] = {
+        error_result = {
             "request_id": request_id,
             "success": False,
             "dataset_name": dataset_name,
             "timestamp": datetime.now().isoformat(),
-            "executive_summary": f"Validation failed: {str(e)}",
             "processing_time_seconds": 0.0,
             "critical_issues": [str(e)],
             "issues_found": [str(e)],
-            "recommendations": ["Fix validation errors before proceeding"],
             "warnings": [],
             "agents_used": [],
             "errors": [str(e)],
@@ -471,6 +498,10 @@ async def process_validation_task(
             "raw_validation_results": {},
             "raw_legal_results": {}
         }
+        
+        # Clean types for error results too
+        error_result = clean_for_json(error_result)
+        validation_results[request_id] = error_result
 
 
 # ASI:One LLM Analysis Endpoint
@@ -675,7 +706,6 @@ async def demo_asi_one_analysis(
 
 # Development server
 if __name__ == "__main__":
-    import uvicorn
     
     print("🚀 Starting Dataset Validation API Server")
     print("ETH Delhi 2025 - Production Ready API")
@@ -698,6 +728,6 @@ if __name__ == "__main__":
     uvicorn.run(
         app,
         host="0.0.0.0",
-        port=8080,
+        port=8000,
         log_level="info"
     )
